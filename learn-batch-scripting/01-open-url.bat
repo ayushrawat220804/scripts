@@ -1,9 +1,9 @@
 @echo off 
 Title Open URL
-echo batch file to open daily urls!!
-pause
-start msedge.exe
 start www.monkeytype.com
-start www.github.com
+start www.github.com/ayushrawat220804
 start www.youtube.com
 start www.discord.com/channels/
+start www.epicgames.com
+start www.speedtest.net
+
