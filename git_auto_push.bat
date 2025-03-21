@@ -28,7 +28,7 @@ if %errorlevel% neq 0 (
 )
 
 :: Check if there are changes to commit
-git status --porcelain >nul
+git status --porcelain >nul 2>&1
 if %errorlevel% neq 0 (
     echo No changes to commit in %repo_path%
     goto end
@@ -52,7 +52,7 @@ for /f "tokens=*" %%a in ('git diff --cached --name-only') do (
 set "commit_message=Update code with changes"
 
 :: Get stats
-for /f "tokens=*" %%a in ('git diff --cached --stat ^| find "insertion"') do (
+for /f "tokens=*" %%a in ('git diff --cached --stat ^| find "changed"') do (
     set "stats=%%a"
     set "commit_message=!commit_message! (!stats!)"
 )
@@ -71,13 +71,55 @@ echo.
 echo Committing changes with message: %commit_message%
 git commit -m "%commit_message%"
 
-:: Push to remote
+:: Try to push to remote
 echo.
 echo Pushing changes to remote repository...
 git push
 
-echo.
-echo Changes successfully committed and pushed!
+:: Check if push failed
+if %errorlevel% neq 0 (
+    echo.
+    echo Push failed. Remote repository may have changes you don't have locally.
+    set /p "pull_first=Do you want to pull changes first and then try pushing again? (Y/n): "
+    
+    if /i not "%pull_first%"=="n" (
+        echo.
+        echo Pulling changes from remote repository...
+        
+        :: Try to pull with rebase to avoid merge commit
+        git pull --rebase
+        
+        if %errorlevel% neq 0 (
+            echo.
+            echo Pull with rebase failed. Trying normal pull...
+            git pull
+            
+            if %errorlevel% neq 0 (
+                echo.
+                echo Pull failed. You may need to resolve conflicts manually.
+                goto end
+            )
+        )
+        
+        echo.
+        echo Pushing changes to remote repository after pull...
+        git push
+        
+        if %errorlevel% neq 0 (
+            echo.
+            echo Push failed again. You may need to resolve this manually.
+        else
+            echo.
+            echo Changes successfully pulled and pushed!
+        )
+    ) else (
+        echo.
+        echo Push operation was skipped. Changes are committed but not pushed.
+    )
+) else (
+    echo.
+    echo Changes successfully committed and pushed!
+)
 
 :end
 endlocal
