@@ -1,4 +1,4 @@
-@echo off 
+@echo off
 Title Open URL
 start www.monkeytype.com
 start www.github.com/ayushrawat220804
