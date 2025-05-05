@@ -1,0 +1,4 @@
+app = SystemUtilities(root)
+        # Start background monitoring and periodic log updates
+        root.after(2000, app.update_background_logs)
+        # Check for admin privileges and warn if not running as admin

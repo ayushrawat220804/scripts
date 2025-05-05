@@ -1,0 +1,4 @@
+psutil>=5.9.0
+matplotlib>=3.5.0
+winshell>=0.6.0
+pywin32>=303 

@@ -1,3 +1,0 @@
-create 10 fake cursor accounts for promptings
-learn html css js for basic web dev
-create asphaltlegendsunite website ui

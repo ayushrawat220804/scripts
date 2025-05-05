@@ -1,0 +1,12 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+// This rule increases the time limit for the diff algorithm
+// to prevent it from stopping early when processing large files
+// The timeout is now set to 30000ms (30 seconds) instead of 5000ms
+
+{
+    "diffTimeoutMs": 30000
+}
