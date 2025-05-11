@@ -63,7 +63,11 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
     # Show error message in dialog if possible
     try:
         messagebox.showerror("Unhandled Error", 
-                            f"An unexpected error occurred:\n\n{str(exc_value)}\n\nSee console for details.")
+                            f"An unexpected error occurred:
+
+{str(exc_value)}
+
+See console for details.")
     except:
         # If messagebox fails, just print to console
         print("Could not show error dialog")
@@ -147,7 +151,799 @@ def handle_exception(func):
             self.log(f"Traceback: {traceback.format_exc()}", 'error')
             # Show error message to user
             self.update_status(f"Error in {func.__name__}")
-            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:\n\n{str(e)}")
+            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:
+
+{str(e)}")
+            return None
+    return wrapper
+
+def thread_safe(func):
+    """Decorator for ensuring thread-safe UI updates"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with ui_lock:
+            return func(self, *args, **kwargs)
+    return wrapper
+
+class SystemUtilities:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Windows System Utilities")
+        
+        # Make window open in fullscreen by default
+        self.root.state('zoomed')  # For Windows, this maximizes the window
+        
+        # Get screen dimensions for responsive design
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Set minimum size for the window
+        self.root.minsize(900, 600)
+        
+        # Set the application icon
+        try:
+            self.root.iconbitmap("system_icon.ico")
+        except:
+            # Icon file not found, continue without it
+            pass
+        
+        # Configure the style for better appearance
+        self.style = ttk.Style()
+        # Apply clam theme if available
+        if 'clam' in self.style.theme_names():
+            self.style.theme_use('clam')
+            
+        self.style.configure('TFrame', background=BG_COLOR)
+        self.style.configure('Tab.TFrame', background=BG_COLOR)
+        self.style.configure('TLabel', background=BG_COLOR, foreground=TEXT_COLOR, font=NORMAL_FONT)
+        self.style.configure('Header.TLabel', font=HEADING_FONT, foreground=PRIMARY_COLOR)
+        self.style.configure('TButton', font=BUTTON_FONT)
+        self.style.configure('Primary.TButton', background=PRIMARY_COLOR)
+        self.style.configure('Secondary.TButton', background=SECONDARY_COLOR)
+        self.style.configure('Accent.TButton', background=ACCENT_COLOR)
+        self.style.configure('TLabelframe', background=BG_COLOR)
+        self.style.configure('Group.TLabelframe', background=BG_COLOR)
+        self.style.configure('Group.TLabelframe.Label', background=BG_COLOR, foreground=TEXT_COLOR, font=NORMAL_FONT)
+        
+        # Set up the main frame with split-pane layout
+        main_frame = ttk.Frame(root, style='TFrame')
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create PanedWindow for split layout
+        self.paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Left side - Tool tabs
+        self.left_frame = ttk.Frame(self.paned, style='TFrame')
+        
+        # Right side - Logs and status
+        self.right_frame = ttk.Frame(self.paned, style='TFrame')
+        
+        # Add the frames to the paned window
+        self.paned.add(self.left_frame, weight=3)
+        self.paned.add(self.right_frame, weight=1)
+        
+        # Create tabs on the left side
+        self.tabs = ttk.Notebook(self.left_frame)
+        self.tabs.pack(fill=tk.BOTH, expand=True)
+        
+        # Create the tabs
+        self.cleanup_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.system_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.update_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.storage_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.network_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.hyperv_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.optimize_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        
+        # Add tabs to the notebook
+        self.tabs.add(self.cleanup_tab, text="Cleanup")
+        self.tabs.add(self.system_tab, text="System Tools")
+        self.tabs.add(self.update_tab, text="Windows Update")
+        self.tabs.add(self.storage_tab, text="Storage")
+        self.tabs.add(self.network_tab, text="Network")
+        self.tabs.add(self.hyperv_tab, text="Hyper-V")
+        self.tabs.add(self.optimize_tab, text="Optimize")
+        
+        # Add tab change event 
+        self.tabs.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        
+        # Set up the log area on the right side
+        self.create_log_area()
+        
+        # Initialize tab contents
+        self.init_cleanup_tab()
+        self.init_system_tab()
+        self.init_update_tab()
+        self.init_storage_tab()
+        self.init_network_tab()
+        self.init_hyperv_tab()
+        self.init_optimize_tab()
+        
+        # Add status bar at the bottom
+        self.status_bar = ttk.Label(root, text="Ready", relief=tk.SUNKEN, anchor=tk.W, font=NORMAL_FONT)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Initialize the thread pool for background tasks
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        
+        # Set background monitoring parameters
+        self.background_monitoring = True
+        self.show_verbose_logs = True
+        
+        # Show a welcome message
+        self.log("System Utilities initialized successfully", "info")
+        self.update_status("Ready")
+        
+        # Start background monitoring
+        self.start_background_monitoring()
+        
+        # Periodically collect garbage to prevent memory leaks
+        def garbage_collect():
+            import gc
+            gc.collect()
+            self.root.after(300000, garbage_collect)  # Every 5 minutes
+        
+        # Start the garbage collection timer
+        self.root.after(300000, garbage_collect)
+    
+    def on_tab_changed(self, event):
+        """Handle tab change event to collect and show relevant system information"""
+        tab_id = self.tabs.select()
+        tab_name = self.tabs.tab(tab_id, "text")
+        
+        # Log the tab change
+        self.log(f"Switched to {tab_name} tab", "info")
+        
+        # Show relevant system information based on the tab
+        if tab_name == "Network":
+            self.log_network_info()
+        elif tab_name == "Hyper-V":
+            self.log_hyperv_info()
+        elif tab_name == "Optimize":
+            self.log_performance_info()
+        elif tab_name == "Storage":
+            self.log_storage_info()
+    
+    def start_background_monitoring(self):
+        """Start background monitoring threads"""
+        self.log("Starting background system monitoring...", "background")
+        
+        # Start network monitoring thread
+        network_thread = Thread(target=self._monitor_network_activity)
+        network_thread.daemon = True
+        network_thread.start()
+        
+        # Start performance monitoring thread
+        performance_thread = Thread(target=self._monitor_system_performance)
+        performance_thread.daemon = True
+        performance_thread.start()
+        
+        # Start Hyper-V monitoring thread (if applicable)
+        hyperv_thread = Thread(target=self._monitor_hyperv_status)
+        hyperv_thread.daemon = True
+        hyperv_thread.start()
+    
+    def _monitor_network_activity(self):
+        """Background thread to monitor network activity"""
+        try:
+            # Initialize network stats
+            prev_net_io = psutil.net_io_counters()
+            
+            while self.background_monitoring:
+                time.sleep(10)  # Check every 10 seconds
+                
+                try:
+                    # Get current network stats
+                    net_io = psutil.net_io_counters()
+                    
+                    # Calculate data transferred since last check
+                    sent_mb = (net_io.bytes_sent - prev_net_io.bytes_sent) / (1024 * 1024)
+                    recv_mb = (net_io.bytes_recv - prev_net_io.bytes_recv) / (1024 * 1024)
+                    
+                    # Log significant network activity
+                    if sent_mb > 5 or recv_mb > 5:  # Only log if more than 5MB in 10 seconds
+                        self.root.after(0, lambda s=sent_mb, r=recv_mb: 
+                                    self.log(f"Data transfer: {s:.2f}MB sent, {r:.2f}MB received in last 10 seconds", "network"))
+                    
+                    # Update previous stats
+                    prev_net_io = net_io
+                    
+                    # Check for connection changes every 30 seconds
+                    if time.time() % 30 < 10:
+                        try:
+                            # Get connection stats (requires admin on Windows)
+                            # This might fail on non-admin, which is fine
+                            connections = len(psutil.net_connections())
+                            self.root.after(0, lambda c=connections: 
+                                        self.log(f"Active network connections: {c}", "network"))
+                        except:
+                            pass
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Network monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in network monitoring thread: {str(e)}")
+    
+    def _monitor_system_performance(self):
+        """Background thread to monitor system performance"""
+        try:
+            while self.background_monitoring:
+                time.sleep(15)  # Check every 15 seconds
+                
+                try:
+                    # Get system performance metrics
+                    cpu_percent = psutil.cpu_percent(interval=1)
+                    memory = psutil.virtual_memory()
+                    
+                    # Log when system is under high load
+                    if cpu_percent > 75:
+                        self.root.after(0, lambda p=cpu_percent: 
+                                    self.log(f"High CPU usage: {p}%", "system"))
+                    
+                    if memory.percent > 80:
+                        self.root.after(0, lambda p=memory.percent: 
+                                    self.log(f"High memory usage: {p}%", "system"))
+                    
+                    # Periodically log general system info (every 60 seconds)
+                    if time.time() % 60 < 15:
+                        # Get disk I/O
+                        try:
+                            disk_io = psutil.disk_io_counters()
+                            if hasattr(self, 'prev_disk_io'):
+                                read_mb = (disk_io.read_bytes - self.prev_disk_io.read_bytes) / (1024 * 1024)
+                                write_mb = (disk_io.write_bytes - self.prev_disk_io.write_bytes) / (1024 * 1024)
+                                
+                                if read_mb > 50 or write_mb > 50:  # Only log high activity
+                                    self.root.after(0, lambda r=read_mb, w=write_mb: 
+                                                self.log(f"Disk activity: {r:.2f}MB read, {w:.2f}MB written in last minute", "system"))
+                            
+                            self.prev_disk_io = disk_io
+                        except:
+                            pass
+                    
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Performance monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in performance monitoring thread: {str(e)}")
+    
+    def _monitor_hyperv_status(self):
+        """Background thread to monitor Hyper-V status"""
+        try:
+            # Initial delay to not overload startup
+            time.sleep(20)
+            
+            while self.background_monitoring:
+                # Check less frequently
+                time.sleep(60)
+                
+                try:
+                    # Only do this check on Windows
+                    if platform.system() != 'Windows':
+                        continue
+                    
+                    # Check Hyper-V status using PowerShell
+                    ps_command = [
+                        "powershell",
+                        "-Command",
+                        "(Get-Service -Name 'vmms' -ErrorAction SilentlyContinue).Status"
+                    ]
+                    
+                    process = subprocess.Popen(
+                        ps_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    
+                    stdout, stderr = process.communicate(timeout=10)
+                    
+                    if process.returncode == 0 and stdout.strip():
+                        status = stdout.strip()
+                        if status == "Running":
+                            # Log running VMs
+                            try:
+                                vm_command = [
+                                    "powershell",
+                                    "-Command",
+                                    "Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name"
+                                ]
+                                
+                                vm_process = subprocess.Popen(
+                                    vm_command,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                
+                                vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
+                                
+                                if vm_process.returncode == 0 and vm_stdout.strip():
+                                    running_vms = vm_stdout.strip().split('\n')
+                                    running_vms = [vm.strip() for vm in running_vms if vm.strip()]
+                                    
+                                    if running_vms:
+                                        self.root.after(0, lambda vms=running_vms: 
+                                                    self.log(f"Running VMs: {', '.join(vms)}", "hyperv"))
+                            except:
+                                pass
+                
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Hyper-V monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in Hyper-V monitoring thread: {str(e)}")
+    
+    def log_network_info(self):
+        """Log detailed network information when network tab is selected"""
+        self.log("Collecting network information...", "network")
+        
+        # Start thread to collect detailed network info
+        network_info_thread = Thread(target=self._collect_network_info)
+        network_info_thread.daemon = True
+        network_info_thread.start()
+    
+    def _collect_network_info(self):
+        """Collect detailed network information in a background thread"""
+        try:
+            # Get network interfaces
+            interfaces = psutil.net_if_addrs()
+            active_interfaces = []
+            
+            for interface, addrs in interfaces.items():
+                for addr in addrs:
+                    if addr.family == socket.AF_INET and not addr.address.startswith('127.'):
+                        active_interfaces.append(f"{interface}: {addr.address}")
+            
+            if active_interfaces:
+                self.root.after(0, lambda ifs=active_interfaces: 
+                            self.log(f"Active network interfaces: {', '.join(ifs)}", "network"))
+            
+            # Get default gateway
+            try:
+                gateways = psutil.net_if_stats()
+                for name, stats in gateways.items():
+                    if stats.isup:
+                        self.root.after(0, lambda n=name, s=stats: 
+                                    self.log(f"Interface {n} is up, speed: {s.speed} Mbps", "network"))
+            except:
+                pass
+            
+            # Check internet connectivity
+            try:
+                # Try to get external IP
+                urls = ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]
+                
+                import urllib.request
+                
+                for url in urls:
+                    try:
+                        response = urllib.request.urlopen(url, timeout=3)
+                        data = response.read().decode('utf-8')
+                        external_ip = data.strip()
+                        self.root.after(0, lambda ip=external_ip: 
+                                    self.log(f"Internet connection active, external IP: {ip}", "network"))
+                        break
+                    except:
+                        continue
+            except:
+                pass
+            
+        except Exception as e:
+            print(f"Error collecting network info: {str(e)}")
+    
+    def log_hyperv_info(self):
+        """Log detailed Hyper-V information when Hyper-V tab is selected"""
+        self.log("Collecting Hyper-V information...", "hyperv")
+        
+        # Start thread to collect detailed Hyper-V info
+        hyperv_info_thread = Thread(target=self._collect_hyperv_info)
+        hyperv_info_thread.daemon = True
+        hyperv_info_thread.start()
+    
+    def _collect_hyperv_info(self):
+        """Collect detailed Hyper-V information in a background thread"""
+        try:
+            # Check Hyper-V status
+            ps_command = [
+                "powershell",
+                "-Command",
+                "(Get-WindowsOptionalFeature -FeatureName Microsoft-Hyper-V-All -Online -ErrorAction SilentlyContinue).State"
+            ]
+            
+            process = subprocess.Popen(
+                ps_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            stdout, stderr = process.communicate(timeout=10)
+            
+            if process.returncode == 0 and stdout.strip():
+                state = stdout.strip()
+                is_enabled = state == "Enabled"
+                
+                if is_enabled:
+                    self.root.after(0, lambda: self.log("Hyper-V is enabled on this system", "hyperv"))
+                    
+                    # Get VM count
+                    vm_command = [
+                        "powershell",
+                        "-Command",
+                        "Get-VM -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count"
+                    ]
+                    
+                    vm_process = subprocess.Popen(
+                        vm_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    
+                    vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
+                    
+                    if vm_process.returncode == 0 and vm_stdout.strip():
+                        try:
+                            vm_count = int(vm_stdout.strip())
+                            self.root.after(0, lambda c=vm_count: 
+                                        self.log(f"Found {c} virtual machines", "hyperv"))
+                            
+                            # Get running VMs
+                            if vm_count > 0:
+                                running_command = [
+                                    "powershell",
+                                    "-Command",
+                                    "Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name"
+                                ]
+                                
+                                running_process = subprocess.Popen(
+                                    running_command,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                
+                                running_stdout, running_stderr = running_process.communicate(timeout=10)
+                                
+                                if running_process.returncode == 0 and running_stdout.strip():
+                                    running_vms = running_stdout.strip().split('\n')
+                                    running_vms = [vm.strip() for vm in running_vms if vm.strip()]
+                                    
+                                    if running_vms:
+                                        self.root.after(0, lambda vms=running_vms: 
+                                                    self.log(f"Running VMs: {', '.join(vms)}", "hyperv"))
+                        except Exception as e:
+                            self.log(f"Error getting Hyper-V info: {str(e)}", "error")
+        
+        except Exception as e:
+            print(f"Error collecting Hyper-V info: {str(e)}")
+    
+    def log_performance_info(self):
+        """Log detailed performance information when Optimize tab is selected"""
+        self.log("Collecting performance information...", "optimize")
+        
+        # Start thread to collect detailed performance info
+        performance_info_thread = Thread(target=self._collect_performance_info)
+        performance_info_thread.daemon = True
+        performance_info_thread.start()
+    
+    def _collect_performance_info(self):
+        """Collect detailed performance information in a background thread"""
+        try:
+            # Get CPU info
+            cpu_info = psutil.cpu_freq()
+            self.root.after(0, lambda i=cpu_info: 
+                        self.log(f"CPU frequency: {i.current} MHz (min: {i.min} MHz, max: {i.max} MHz)", "optimize"))
+            
+            # Get memory info
+            memory_info = psutil.virtual_memory()
+            self.root.after(0, lambda m=memory_info: 
+                        self.log(f"Memory: {m.total / (1024 ** 3):.2f} GB (used: {m.used / (1024 ** 3):.2f} GB, free: {m.free / (1024 ** 3):.2f} GB)", "optimize"))
+            
+            # Get disk info
+            disk_info = psutil.disk_usage('/')
+            self.root.after(0, lambda d=disk_info: 
+                        self.log(f"Disk: {d.total / (1024 ** 3):.2f} GB (used: {d.used / (1024 ** 3):.2f} GB, free: {d.free / (1024 ** 3):.2f} GB)", "optimize"))
+            
+            # Get network info
+            network_info = psutil.net_io_counters()
+            self.root.after(0, lambda n=network_info: 
+                        self.log(f"Network: sent {n.bytes_sent / (1024 ** 2):.2f} MB, received {n.bytes_recv / (1024 ** 2):.2f} MB", "optimize"))
+            
+            # Get boot time
+            boot_time = psutil.boot_time()
+            boot_time_str = datetime.fromtimestamp(boot_time).strftime("%Y-%m-%d %H:%M:%S")
+            self.root.after(0, lambda bt=boot_time_str: 
+                        self.log(f"System boot time: {bt}", "optimize"))
+            
+            # Get uptime
+            uptime = time.time() - boot_time
+            uptime_str = str(datetime.timedelta(seconds=int(uptime)))
+            self.root.after(0, lambda ut=uptime_str: 
+                        self.log(f"System uptime: {ut}", "optimize"))
+            
+            # Get running processes
+            processes = psutil.process_iter(['pid', 'name', 'username'])
+            process_list = [f"{p.info['pid']}: {p.info['name']} ({p.info['username']})" for p in processes]
+            self.root.after(0, lambda pl=process_list: 
+                        self.log(f"Running processes: {', '.join(pl)}", "optimize"))
+            
+            # Get system information
+            system_info = platform.uname()
+            self.root.after(0, lambda si=system_info: 
+                        self.log(f"System: {si.system} {si.release} ({si.version}), {si.machine}", "optimize"))
+            
+            # Get Python version
+            python_version = platform.python_version()
+            self.root.after(0, lambda pv=python_version: 
+                        self.log(f"Python version: {pv}", "optimize"))
+            
+            # Get environment variables
+            env_vars = os.environ
+            self.root.after(0, lambda ev=env_vars: 
+                        self.log(f"Environment variables: {', '.join([f'{k}={v}' for k, v in ev.items()])}", "optimize"))
+            
+            # Get installed packages
+            try:
+                import pkg_resources
+                installed_packages = [f"{i.key}=={i.version}" for i in pkg_resources.working_set]
+                self.root.after(0, lambda ip=installed_packages: 
+                            self.log(f"Installed packages: {', '.join(ip)}", "optimize"))
+            except ImportError:
+                pass
+        except Exception as e:
+            print(f"Error collecting performance info: {str(e)}")
+    
+    def log_storage_info(self):
+        """Log detailed storage information when Storage tab is selected"""
+        self.log("Collecting storage information...", "storage")
+        
+        # Start thread to collect detailed storage info
+        storage_info_thread = Thread(target=self._collect_storage_info)
+        storage_info_thread.daemon = True
+        storage_info_thread.start()
+    
+    def _collect_storage_info(self):
+        """Collect detailed storage information in a background thread"""
+        try:
+            # Get disk usage
+            disk_usage = psutil.disk_usage('/')
+            self.root.after(0, lambda du=disk_usage: 
+                        self.log(f"Disk usage: {du.percent}% ({du.used / (1024 ** 3):.2f} GB used, {du.free / (1024 ** 3):.2f} GB free)", "storage"))
+            
+            # Get disk partitions
+            partitions = psutil.disk_partitions(all=False)
+            for p in partitions:
+                partition_info = psutil.disk_usage(p.mountpoint)
+                self.root.after(0, lambda pi=partition_info, p=p: 
+                            self.log(f"Partition {p.device} ({p.fstype}): {pi.percent}% ({pi.used / (1024 ** 3):.2f} GB used, {pi.free / (1024 ** 3):.2f} GB free)", "storage"))
+            
+            # Get mounted drives
+            drives = psutil.disk_partitions(all=True)
+            for d in drives:
+                if d.fstype:
+                    drive_info = psutil.disk_usage(d.mountpoint)
+                    self.root.after(0, lambda di=drive_info, d=d: 
+                                self.log(f"Drive {d.device} ({d.fstype}): {di.percent}% ({di.used / (1024 ** 3):.2f} GB used, {di.free / (1024 ** 3):.2f} GB free)", "storage"))
+        except Exception as e:
+            print(f"Error collecting storage info: {str(e)}")
+    
+    def create_log_area(self):
+        """Create the log area on the right side"""
+        self.log_frame = ttk.Frame(self.right_frame, style='TFrame')
+        self.log_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, font=LOG_FONT, state=tk.DISABLED)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a tag for each log level
+        self.log_text.tag_configure("info", foreground="black")
+        self.log_text.tag_configure("warning", foreground=WARNING_FG, background=WARNING_BG)
+        self.log_text.tag_configure("error", foreground=ERROR_FG, background=ERROR_BG)
+        self.log_text.tag_configure("success", foreground=SUCCESS_FG, background=SUCCESS_BG)
+        self.log_text.tag_configure("network", foreground="#007AFF")  # Blue for network
+        self.log_text.tag_configure("hyperv", foreground="#FF9500")  # Orange for Hyper-V
+        self.log_text.tag_configure("optimize", foreground="#00B359")  # Green for optimization
+        self.log_text.tag_configure("storage", foreground="#8E44AD")  # Purple for storage
+        self.log_text.tag_configure("system", foreground="#2C3E50")  # Dark gray for system
+        self.log_text.tag_configure("background", foreground="#7F8C8D")  # Light gray for background
+        
+        # Create a tag for the timestamp
+        self.log_text.tag_configure("timestamp", foreground="#555555")  # Gray for timestamp
+        
+        # Create a tag for the log level indicator
+        self.log_text.tag_configure("level", font=("Segoe UI", 9, "bold"))
+        
+        # Create a tag for the log message
+        self.log_text.tag_configure("message", font=LOG_FONT)
+        
+        # Create a tag for the separator line
+        self.log_text.tag_configure("separator", foreground="#CCCCCC")
+    
+    def log(self, message, level="info"):
+        """Log a message to the log area"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        formatted_message = f"[{timestamp}] [{level.upper()}] {message}\n"
+        
+        # Insert the message with the appropriate tag
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.insert(tk.END, formatted_message, (level, "timestamp", "level", "message"))
+        self.log_text.insert(tk.END, "-" * 50 + "\n", "separator")
+        self.log_text.configure(state=tk.DISABLED)
+        
+        # Autoscroll to the end
+        self.log_text.see(tk.END)
+    
+    def update_status(self, message):
+        """Update the status bar with a message"""
+        self.status_bar.config(text=message)
+    
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
+import subprocess
+import os
+import sys
+import tempfile
+import ctypes
+import shutil
+from threading import Thread
+import threading
+import re
+import psutil
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import platform
+import glob
+import winreg
+from datetime import datetime
+import time
+import csv
+import socket
+import functools
+import traceback
+import concurrent.futures
+import fnmatch
+
+try:
+    import winshell
+except ImportError:
+    pass  # Handle later in the code
+
+# Set better UI fonts and colors
+HEADING_FONT = ('Segoe UI', 12, 'bold')
+NORMAL_FONT = ('Segoe UI', 10)
+BUTTON_FONT = ('Segoe UI', 9)
+DESCRIPTION_FONT = ('Segoe UI', 9)
+LOG_FONT = ('Consolas', 9)
+
+# Color scheme
+BG_COLOR = "#f5f5f5"
+PRIMARY_COLOR = "#3498db"
+SECONDARY_COLOR = "#e74c3c"
+ACCENT_COLOR = "#2ecc71"
+TEXT_COLOR = "#333333"
+WARNING_BG = "#fff3cd"
+WARNING_FG = "#856404"
+ERROR_BG = "#f8d7da"
+ERROR_FG = "#721c24"
+SUCCESS_BG = "#d4edda"
+SUCCESS_FG = "#155724"
+LOG_BG = "#f8f9fa"
+
+# Thread safety lock for UI updates
+ui_lock = threading.Lock()
+
+# Global exception handler to prevent application crashes
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    """Global exception handler to prevent crashes"""
+    # Format the exception
+    error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    # Log to console
+    print(f"Unhandled exception: {error_msg}")
+    # Show error message in dialog if possible
+    try:
+        messagebox.showerror("Unhandled Error", 
+                            f"An unexpected error occurred:
+
+{str(exc_value)}
+
+See console for details.")
+    except:
+        # If messagebox fails, just print to console
+        print("Could not show error dialog")
+    # Return True to prevent the default tkinter error dialog
+    return True
+
+# Install the exception handler
+sys.excepthook = global_exception_handler
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+def run_as_admin():
+    # Get the script path
+    script_path = os.path.abspath(sys.argv[0])
+    
+    # Only run if we have a valid path (not running from IDLE, etc.)
+    if os.path.exists(script_path):
+        try:
+            # Use ShellExecuteW to run the script as admin
+            ctypes.windll.shell32.ShellExecuteW(
+                None, 
+                "runas", 
+                sys.executable, 
+                f'"{script_path}"', 
+                None, 
+                1
+            )
+        except Exception as e:
+            print(f"Error running as admin: {e}")
+            # If there's an error, don't exit - just log it and continue without admin
+            return False
+    else:
+        print("Could not determine script path")
+        return False
+    return True
+
+def is_windows_10_or_11():
+    """Check if the current system is running Windows 10 or 11"""
+    try:
+        # Get Windows version
+        win_ver = platform.win32_ver()
+        win_version = win_ver[0]  # Major version
+        win_build = win_ver[1]    # Build number
+        
+        # Windows 10 build numbers start from 10240 (RTM)
+        # Windows 11 build numbers start from 22000
+        if win_version == '10':
+            build_num = int(win_build.split('.')[0])
+            return build_num >= 10240
+        else:
+            # Try to determine based on registry
+            try:
+                reg_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
+                                        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+                build_num = int(winreg.QueryValueEx(reg_key, "CurrentBuildNumber")[0])
+                winreg.CloseKey(reg_key)
+                
+                # Windows 11 builds are 22000+
+                return build_num >= 10240
+            except:
+                # If we can't determine, we'll assume it's not compatible
+                return False
+    except:
+        return False
+
+def handle_exception(func):
+    """Decorator for handling exceptions in methods"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            # Log the exception
+            self.log(f"Error in {func.__name__}: {str(e)}", 'error')
+            # Log the traceback for debugging
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", 'error')
+            # Show error message to user
+            self.update_status(f"Error in {func.__name__}")
+            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:
+
+{str(e)}")
             return None
     return wrapper
 
@@ -618,6 +1414,1847 @@ class SystemUtilities:
                                                     self.log(f"Running VMs: {', '.join(vms)}", "hyperv"))
                         except:
                             pass
+                    
+        except Exception as e:
+            print(f"Error collecting Hyper-V info: {str(e)}")
+    
+    def log_performance_info(self):
+        """Log detailed performance information when Optimize tab is selected"""
+        self.log("Collecting performance information...", "optimize")
+        
+        # Start thread to collect detailed performance info
+        performance_info_thread = Thread(target=self._collect_performance_info)
+        performance_info_thread.daemon = True
+        performance_info_thread.start()
+    
+    def _collect_performance_info(self):
+        """Collect detailed performance information in a background thread"""
+        try:
+            # Get CPU info
+            cpu_info = platform.processor()
+            self.root.after(0, lambda info=cpu_info: 
+                        self.log(f"CPU: {info}", "optimize"))
+            
+            # Get RAM info
+            ram_info = f"{psutil.virtual_memory().total / (1024 ** 3):.2f} GB"
+            self.root.after(0, lambda info=ram_info: 
+                        self.log(f"RAM: {info}", "optimize"))
+            
+            # Get GPU info (if available)
+            try:
+                import GPUtil
+                gpus = GPUtil.getGPUs()
+                for gpu in gpus:
+                    self.root.after(0, lambda g=gpu: 
+                                self.log(f"GPU: {g.name}", "optimize"))
+            except:
+                pass
+            
+            # Get disk info
+            disk_info = psutil.disk_usage('/')
+            self.root.after(0, lambda info=disk_info: 
+                        self.log(f"Disk: {info.total / (1024 ** 3):.2f} GB", "optimize"))
+            
+            # Get network info
+            network_info = psutil.net_if_addrs()
+            for interface, addrs in network_info.items():
+                for addr in addrs:
+                    if addr.family == socket.AF_INET and not addr.address.startswith('127.'):
+                        self.root.after(0, lambda i=interface, a=addr.address: 
+                                    self.log(f"Network: {i} - {a}", "optimize"))
+        except Exception as e:
+            print(f"Error collecting performance info: {str(e)}")
+    
+    def log_storage_info(self):
+        """Log detailed storage information when Storage tab is selected"""
+        self.log("Collecting storage information...", "storage")
+        
+        # Start thread to collect detailed storage info
+        storage_info_thread = Thread(target=self._collect_storage_info)
+        storage_info_thread.daemon = True
+        storage_info_thread.start()
+    
+    def _collect_storage_info(self):
+        """Collect detailed storage information in a background thread"""
+        try:
+            # Get disk usage
+            disk_usage = psutil.disk_usage('/')
+            self.root.after(0, lambda du=disk_usage: 
+                        self.log(f"Total: {du.total / (1024 ** 3):.2f} GB, Used: {du.used / (1024 ** 3):.2f} GB, Free: {du.free / (1024 ** 3):.2f} GB", "storage"))
+            
+            # Get partition info
+            partitions = psutil.disk_partitions(all=False)
+            for partition in partitions:
+                usage = psutil.disk_usage(partition.mountpoint)
+                self.root.after(0, lambda p=partition, u=usage: 
+                            self.log(f"{p.device} ({p.fstype}): Total: {u.total / (1024 ** 3):.2f} GB, Used: {u.used / (1024 ** 3):.2f} GB, Free: {u.free / (1024 ** 3):.2f} GB", "storage"))
+        except Exception as e:
+            print(f"Error collecting storage info: {str(e)}")
+    
+    def create_log_area(self):
+        """Create the log area on the right side"""
+        self.log_frame = ttk.Frame(self.right_frame, style='TFrame')
+        self.log_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, font=LOG_FONT, bg=LOG_BG)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Configure tag for different log levels
+        self.log_text.tag_configure("info", foreground="black")
+        self.log_text.tag_configure("error", foreground="red")
+        self.log_text.tag_configure("warning", foreground="orange")
+        self.log_text.tag_configure("success", foreground="green")
+        self.log_text.tag_configure("network", foreground="blue")
+        self.log_text.tag_configure("hyperv", foreground="purple")
+        self.log_text.tag_configure("optimize", foreground="darkgreen")
+        self.log_text.tag_configure("storage", foreground="brown")
+        self.log_text.tag_configure("background", foreground="gray")
+        
+        # Disable text editing
+        self.log_text.config(state=tk.DISABLED)
+    
+    def log(self, message, level="info"):
+        """Log a message to the log area"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        formatted_message = f"[{timestamp}] {message}"
+        
+        # Update the log area in the main thread
+        self.root.after(0, lambda msg=formatted_message, lvl=level: self._update_log(msg, lvl))
+    
+    @thread_safe
+    def _update_log(self, message, level):
+        """Update the log area in a thread-safe manner"""
+        # Enable text editing
+        self.log_text.config(state=tk.NORMAL)
+        
+        # Insert the message with the appropriate tag
+        self.log_text.insert(tk.END, message + "\n", (level,))
+        
+        # Disable text editing
+        self.log_text.config(state=tk.DISABLED)
+        
+        # Autoscroll to the end
+        self.log_text.see(tk.END)
+    
+    def init_cleanup_tab(self):
+        """Initialize the Cleanup tab"""
+        self.cleanup_frame = ttk.Frame(self.cleanup_tab, style='TFrame')
+        self.cleanup_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for the cleanup options
+        self.cleanup_options_frame = ttk.LabelFrame(self.cleanup_frame, text="Cleanup Options", style='Group.TLabelframe')
+        self.cleanup_options_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a frame for the cleanup buttons
+        self.cleanup_buttons_frame = ttk.Frame(self.cleanup_options_frame, style='TFrame')
+        self.cleanup_buttons_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create buttons for each cleanup option
+        self.cleanup_buttons = {
+            "Disk Cleanup": self.disk_cleanup,
+            "Empty Recycle Bin": self.empty_recycle_bin,
+            "Clear Temporary Files": self.clear_temp_files,
+            "Clear Windows Cache": self.clear_windows_cache,
+            "Clear Browser Cache": self.clear_browser_cache,
+            "Clear Thumbnail Cache": self.clear_thumbnail_cache,
+            "Clear Font Cache": self.clear_font_cache,
+            "Clear Delivery Optimization Files": self.clear_delivery_optimization_files,
+            "Clear Windows Defender History": self.clear_windows_defender_history,
+            "Complete System Cleanup": self.full_system_cleanup,
+        }
+        
+        for label, command in self.cleanup_buttons.items():
+            button = ttk.Button(self.cleanup_buttons_frame, text=label, command=command, style='Primary.TButton')
+            button.pack(fill=tk.X, padx=5, pady=5)
+    
+    def init_system_tab(self):
+        """Initialize the System Tools tab"""
+        self.system_frame = ttk.Frame(self.system_tab, style='TFrame')
+        self.system_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for the system tools
+        self.system_tools_frame = ttk.LabelFrame(self.system_frame, text="System Tools", style='Group.TLabelframe')
+        self.system_tools_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a frame for the system tool buttons
+        self.system_buttons_frame = ttk.Frame(self.system_tools_frame, style='TFrame')
+        self.system_buttons_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create buttons for each system tool
+        self.system_buttons = {
+            "Enable Group Policy Editor": self.enable_gpedit,
+            "System Information": self.system_info,
+            "Manage Services": self.manage_services,
+            "Registry Backup": self.registry_backup,
+            "Driver Update Check": self.driver_update_check,
+            "Network Diagnostics": self.network_diagnostics,
+            "Check Virtualization Status": self.check_virtualization_status,
+        }
+        
+        for label, command in self.system_buttons.items():
+            button = ttk.Button(self.system_buttons_frame, text=label, command=command, style='Primary.TButton')
+            button.pack(fill=tk.X, padx=5, pady=5)
+    
+    def init_update_tab(self):
+        """Initialize the Windows Update tab"""
+        self.update_frame = ttk.Frame(self.update_tab, style='TFrame')
+        self.update_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for the update options
+        self.update_options_frame = ttk.LabelFrame(self.update_frame, text="Update Options", style='Group.TLabelframe')
+        self.update_options_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a frame for the update buttons
+        self.update_buttons_frame = ttk.Frame(self.update_options_frame, style='TFrame')
+        self.update_buttons_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create buttons for each update option
+        self.update_buttons = {
+            "Enable Updates": self.enable_updates,
+            "Disable Updates": self.disable_updates,
+            "Enable Auto-enable": self.enable_auto_enable,
+            "Disable Auto-enable": self.disable_auto_enable,
+            "Check for Updates": self.check_for_updates,
+            "Install Updates": self.install_updates,
+            "Remove Windows Update Files": self.remove_windows_update_files,
+        }
+        
+        for label, command in self.update_buttons.items():
+            button = ttk.Button(self.update_buttons_frame, text=label, command=command, style='Primary.TButton')
+            button.pack(fill=tk.X, padx=5, pady=5)
+    
+    def init_storage_tab(self):
+        """Initialize the Storage tab"""
+        self.storage_frame = ttk.Frame(self.storage_tab, style='TFrame')
+        self.storage_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for the storage analysis
+        self.storage_analysis_frame = ttk.LabelFrame(self.storage_frame, text="Storage Analysis", style='Group.TLabelframe')
+        self.storage_analysis_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a frame for the storage analysis buttons
+        self.storage_buttons_frame = ttk.Frame(self.storage_analysis_frame, style='TFrame')
+        self.storage_buttons_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create buttons for each storage analysis option
+        self.storage_buttons = {
+            "Analyze": self.analyze_storage,
+            "Browse": self.browse_path,
+        }
+        
+        for label, command in self.storage_buttons.items():
+            button = ttk.Button(self.storage_buttons_frame, text=label, command=command, style='Primary.TButton')
+            button.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Create a frame for the storage treeview
+        self.storage_tree_frame = ttk.Frame(self.storage_analysis_frame, style='TFrame')
+        self.storage_tree_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a treeview for displaying storage information
+        self.storage_tree = ttk.Treeview(self.storage_tree_frame, columns=("Size", "Percentage"), show="headings")
+        self.storage_tree.heading("Size", text="Size")
+        self.storage_tree.heading("Percentage", text="Percentage")
+        self.storage_tree.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a scrollbar for the treeview
+        self.storage_scrollbar = ttk.Scrollbar(self.storage_tree_frame, orient="vertical", command=self.storage_tree.yview)
+        self.storage_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.storage_tree.configure(yscrollcommand=self.storage_scrollbar.set)
+        
+        # Create a frame for the storage text area
+        self.storage_text_frame = ttk.Frame(self.storage_analysis_frame, style='TFrame')
+        self.storage_text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a text area for displaying storage analysis results
+        self.storage_text = scrolledtext.ScrolledText(self.storage_text_frame, wrap=tk.WORD, font=NORMAL_FONT, bg=BG_COLOR)
+        self.storage_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Disable text editing
+        self.storage_text.config(state=tk.DISABLED)
+    
+    def init_network_tab(self):
+        """Initialize the Network tab"""
+        self.network_frame = ttk.Frame(self.network_tab, style='TFrame')
+        self.network_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for the network tools
+        self.network_tools_frame = ttk.LabelFrame(self.network_frame, text="Network Tools", style='Group.TLabelframe')
+        self.network_tools_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a frame for the network tool buttons
+        self.network_buttons_frame = ttk.Frame(self.network_tools_frame, style='TFrame')
+        self.network_buttons_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create buttons for each network tool
+        self.network_buttons = {
+            "Ping Test": self.ping_test,
+            "Traceroute": self.traceroute,
+            "DNS Lookup": self.dns_lookup,
+            "Show IP": self.show_ip,
+            "Release IP": self.release_ip,
+            "Renew IP": self.renew_ip,
+            "Reset Winsock": self.reset_winsock,
+            "Reset TCP/IP": self.reset_tcpip,
+            "Flush DNS": self.flush_dns,
+            "Reset Network": self.reset_network,
+        }
+        
+        for label, command in self.network_buttons.items():
+            button = ttk.Button(self.network_buttons_frame, text=label, command=command, style='Primary.TButton')
+            button.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Create a frame for the network output
+        self.network_output_frame = ttk.LabelFrame(self.network_frame, text="Network Output", style='Group.TLabelframe')
+        self.network_output_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a text area for displaying network command output
+        self.network_output_text = scrolledtext.ScrolledText(self.network_output_frame, wrap=tk.WORD, font=NORMAL_FONT, bg=BG_COLOR)
+        self.network_output_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Disable text editing
+        self.network_output_text.config(state=tk.DISABLED)
+    
+    def init_hyperv_tab(self):
+        """Initialize the Hyper-V tab"""
+        self.hyperv_frame = ttk.Frame(self.hyperv_tab, style='TFrame')
+        self.hyperv_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for the Hyper-V tools
+        self.hyperv_tools_frame = ttk.LabelFrame(self.hyperv_frame, text="Hyper-V Tools", style='Group.TLabelframe')
+        self.hyperv_tools_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a frame for the Hyper-V tool buttons
+        self.hyperv_buttons_frame = ttk.Frame(self.hyperv_tools_frame, style='TFrame')
+        self.hyperv_buttons_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create buttons for each Hyper-V tool
+        self.hyperv_buttons = {
+            "Enable Hyper-V": self.enable_hyperv,
+            "Disable Hyper-V": self.disable_hyperv,
+            "Show Live Status": self.show_hyperv_status,
+        }
+        
+        for label, command in self.hyperv_buttons.items():
+            button = ttk.Button(self.hyperv_buttons_frame, text=label, command=command, style='Primary.TButton')
+            button.pack(fill=tk.X, padx=5, pady=5)
+    
+    def init_optimize_tab(self):
+        """Initialize the Optimize tab"""
+        self.optimize_frame = ttk.Frame(self.optimize_tab, style='TFrame')
+        self.optimize_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a frame for the optimization tools
+        self.optimize_tools_frame = ttk.LabelFrame(self.optimize_frame, text="Optimization Tools", style='Group.TLabelframe')
+        self.optimize_tools_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create a frame for the optimization tool buttons
+        self.optimize_buttons_frame = ttk.Frame(self.optimize_tools_frame, style='TFrame')
+        self.optimize_buttons_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create buttons for each optimization tool
+        self.optimize_buttons = {
+            "Optimize Visual Effects": self.optimize_visual_effects,
+            "Optimize Power Plan": self.optimize_power_plan,
+            "Optimize Startup Programs": self.optimize_startup_programs,
+            "Optimize Services": self.optimize_services,
+        }
+        
+        for label, command in self.optimize_buttons.items():
+            button = ttk.Button(self.optimize_buttons_frame, text=label, command=command, style='Primary.TButton')
+            button.pack(fill=tk.X, padx=5, pady=5)
+    
+    def update_status(self, message):
+        """Update the status bar with a message"""
+        self.status_bar.config(text=message)
+    
+    def disk_cleanup(self):
+        """Perform disk cleanup"""
+        self.update_status("Performing disk cleanup...")
+        self.log("Starting disk cleanup...", "info")
+        
+        try:
+            # Run disk cleanup command
+            subprocess.run(["cleanmgr", "/sagerun:1"], check=True)
+            self.log("Disk cleanup completed successfully", "success")
+        except Exception as e:
+            self.log(f"Error during disk cleanup: {str(e)}", "error")
+        finally:
+            self.update_status("Ready")
+    
+    def empty_recycle_bin(self):
+        """Empty the recycle bin"""
+        self.update_status("Emptying recycle bin...")
+        self.log("Emptying recycle bin...", "info")
+        
+        try:
+            # Run recycle bin emptying command
+            subprocess.run(["cmd", "/c", "rd", "/s", "/q", "%SystemDrive%\\$Recycle.Bin"], check=True)
+            self.log("Recycle bin emptied successfully", "success")
+        except Exception as e:
+            self.log(f"Error emptying recycle bin: {str(e)}", "error")
+        finally:
+            self.update_status("Ready")
+    
+    def clear_temp_files(self):
+        """Clear temporary files"""
+        self.update_status("Clearing temporary files...")
+        self.log("Clearing temporary files...", "info")
+        
+        try:
+            # Run temporary files clearing command
+            subprocess.run(["cmd", "/c", "del", "/s", "/f", "/q", "%TEMP%\\*"], check=True)
+            self.log("Temporary files cleared successfully", "success")
+        except Exception as e:
+            self.log(f"Error clearing temporary files: {str(e)}", "error")
+        finally:
+            self.update_status("Ready")
+    
+    def clear_windows_cache(self):
+        """Clear Windows cache"""
+        self.update_status("Clearing Windows cache...")
+        self.log("Clearing Windows cache...", "info")
+        
+        try:
+            # Run Windows cache clearing command
+            subprocess.run(["cmd", "/c", "del", "/s", "/f", "/q", "%SystemDrive%\\Windows\\Temp\\*"], check=True)
+            self.log("Windows cache cleared successfully", "success")
+        except Exception as e:
+            self.log(f"Error clearing Windows cache: {str(e)}", "error")
+        finally:
+            self.update_status("Ready")
+    
+    def clear_browser_cache(self):
+        """Clear browser cache"""
+        self.update_status("Clearing browser cache...")
+        self.log("Clearing browser cache...", "info")
+        
+        try:
+            # Run browser cache clearing command
+            subprocess.run(["cmd", "/c", "del", "/s", "/f", "/q", "%LocalAppData%\\Google\\Chrome\\User Data\\Default\\Cache\\*"], check=True)
+            subprocess.run(["cmd", "/c", "del", "/s", "/f", "/q", "%LocalAppData%\\Mozilla\\Firefox\\Profiles\\*\\cache2\\entries\\*"], check=True)
+            subprocess.run(["cmd", "/c", "del", "/s", "/f", "/q", "%LocalAppData%\\Microsoft\\Windows\\INetCache\\IE\\*"], check=True)
+            self.log("Browser cache cleared successfully", "success")
+        except Exception as e:
+            self.log(f"Error clearing browser cache: {str(e)}", "error")
+        finally:
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
+import subprocess
+import os
+import sys
+import tempfile
+import ctypes
+import shutil
+from threading import Thread
+import threading
+import re
+import psutil
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import platform
+import glob
+import winreg
+from datetime import datetime
+import time
+import csv
+import socket
+import functools
+import traceback
+import concurrent.futures
+import fnmatch
+
+try:
+    import winshell
+except ImportError:
+    pass  # Handle later in the code
+
+# Set better UI fonts and colors
+HEADING_FONT = ('Segoe UI', 12, 'bold')
+NORMAL_FONT = ('Segoe UI', 10)
+BUTTON_FONT = ('Segoe UI', 9)
+DESCRIPTION_FONT = ('Segoe UI', 9)
+LOG_FONT = ('Consolas', 9)
+
+# Color scheme
+BG_COLOR = "#f5f5f5"
+PRIMARY_COLOR = "#3498db"
+SECONDARY_COLOR = "#e74c3c"
+ACCENT_COLOR = "#2ecc71"
+TEXT_COLOR = "#333333"
+WARNING_BG = "#fff3cd"
+WARNING_FG = "#856404"
+ERROR_BG = "#f8d7da"
+ERROR_FG = "#721c24"
+SUCCESS_BG = "#d4edda"
+SUCCESS_FG = "#155724"
+LOG_BG = "#f8f9fa"
+
+# Thread safety lock for UI updates
+ui_lock = threading.Lock()
+
+# Global exception handler to prevent application crashes
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    """Global exception handler to prevent crashes"""
+    # Format the exception
+    error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    # Log to console
+    print(f"Unhandled exception: {error_msg}")
+    # Show error message in dialog if possible
+    try:
+        messagebox.showerror("Unhandled Error", 
+                            f"An unexpected error occurred:
+
+{str(exc_value)}
+
+See console for details.")
+    except:
+        # If messagebox fails, just print to console
+        print("Could not show error dialog")
+    # Return True to prevent the default tkinter error dialog
+    return True
+
+# Install the exception handler
+sys.excepthook = global_exception_handler
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+def run_as_admin():
+    # Get the script path
+    script_path = os.path.abspath(sys.argv[0])
+    
+    # Only run if we have a valid path (not running from IDLE, etc.)
+    if os.path.exists(script_path):
+        try:
+            # Use ShellExecuteW to run the script as admin
+            ctypes.windll.shell32.ShellExecuteW(
+                None, 
+                "runas", 
+                sys.executable, 
+                f'"{script_path}"', 
+                None, 
+                1
+            )
+        except Exception as e:
+            print(f"Error running as admin: {e}")
+            # If there's an error, don't exit - just log it and continue without admin
+            return False
+    else:
+        print("Could not determine script path")
+        return False
+    return True
+
+def is_windows_10_or_11():
+    """Check if the current system is running Windows 10 or 11"""
+    try:
+        # Get Windows version
+        win_ver = platform.win32_ver()
+        win_version = win_ver[0]  # Major version
+        win_build = win_ver[1]    # Build number
+        
+        # Windows 10 build numbers start from 10240 (RTM)
+        # Windows 11 build numbers start from 22000
+        if win_version == '10':
+            build_num = int(win_build.split('.')[0])
+            return build_num >= 10240
+        else:
+            # Try to determine based on registry
+            try:
+                reg_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
+                                        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+                build_num = int(winreg.QueryValueEx(reg_key, "CurrentBuildNumber")[0])
+                winreg.CloseKey(reg_key)
+                
+                # Windows 11 builds are 22000+
+                return build_num >= 10240
+            except:
+                # If we can't determine, we'll assume it's not compatible
+                return False
+    except:
+        return False
+
+def handle_exception(func):
+    """Decorator for handling exceptions in methods"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            # Log the exception
+            self.log(f"Error in {func.__name__}: {str(e)}", 'error')
+            # Log the traceback for debugging
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", 'error')
+            # Show error message to user
+            self.update_status(f"Error in {func.__name__}")
+            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:
+
+{str(e)}")
+            return None
+    return wrapper
+
+def thread_safe(func):
+    """Decorator for ensuring thread-safe UI updates"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with ui_lock:
+            return func(self, *args, **kwargs)
+    return wrapper
+
+class SystemUtilities:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Windows System Utilities")
+        
+        # Make window open in fullscreen by default
+        self.root.state('zoomed')  # For Windows, this maximizes the window
+        
+        # Get screen dimensions for responsive design
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Set minimum size for the window
+        self.root.minsize(900, 600)
+        
+        # Set the application icon
+        try:
+            self.root.iconbitmap("system_icon.ico")
+        except:
+            # Icon file not found, continue without it
+            pass
+        
+        # Configure the style for better appearance
+        self.style = ttk.Style()
+        # Apply clam theme if available
+        if 'clam' in self.style.theme_names():
+            self.style.theme_use('clam')
+            
+        self.style.configure('TFrame', background=BG_COLOR)
+        self.style.configure('Tab.TFrame', background=BG_COLOR)
+        self.style.configure('TLabel', background=BG_COLOR, foreground=TEXT_COLOR, font=NORMAL_FONT)
+        self.style.configure('Header.TLabel', font=HEADING_FONT, foreground=PRIMARY_COLOR)
+        self.style.configure('TButton', font=BUTTON_FONT)
+        self.style.configure('Primary.TButton', background=PRIMARY_COLOR)
+        self.style.configure('Secondary.TButton', background=SECONDARY_COLOR)
+        self.style.configure('Accent.TButton', background=ACCENT_COLOR)
+        self.style.configure('TLabelframe', background=BG_COLOR)
+        self.style.configure('Group.TLabelframe', background=BG_COLOR)
+        self.style.configure('Group.TLabelframe.Label', background=BG_COLOR, foreground=TEXT_COLOR, font=NORMAL_FONT)
+        
+        # Set up the main frame with split-pane layout
+        main_frame = ttk.Frame(root, style='TFrame')
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create PanedWindow for split layout
+        self.paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Left side - Tool tabs
+        self.left_frame = ttk.Frame(self.paned, style='TFrame')
+        
+        # Right side - Logs and status
+        self.right_frame = ttk.Frame(self.paned, style='TFrame')
+        
+        # Add the frames to the paned window
+        self.paned.add(self.left_frame, weight=3)
+        self.paned.add(self.right_frame, weight=1)
+        
+        # Create tabs on the left side
+        self.tabs = ttk.Notebook(self.left_frame)
+        self.tabs.pack(fill=tk.BOTH, expand=True)
+        
+        # Create the tabs
+        self.cleanup_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.system_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.update_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.storage_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.network_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.hyperv_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.optimize_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        
+        # Add tabs to the notebook
+        self.tabs.add(self.cleanup_tab, text="Cleanup")
+        self.tabs.add(self.system_tab, text="System Tools")
+        self.tabs.add(self.update_tab, text="Windows Update")
+        self.tabs.add(self.storage_tab, text="Storage")
+        self.tabs.add(self.network_tab, text="Network")
+        self.tabs.add(self.hyperv_tab, text="Hyper-V")
+        self.tabs.add(self.optimize_tab, text="Optimize")
+        
+        # Add tab change event 
+        self.tabs.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        
+        # Set up the log area on the right side
+        self.create_log_area()
+        
+        # Initialize tab contents
+        self.init_cleanup_tab()
+        self.init_system_tab()
+        self.init_update_tab()
+        self.init_storage_tab()
+        self.init_network_tab()
+        self.init_hyperv_tab()
+        self.init_optimize_tab()
+        
+        # Add status bar at the bottom
+        self.status_bar = ttk.Label(root, text="Ready", relief=tk.SUNKEN, anchor=tk.W, font=NORMAL_FONT)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Initialize the thread pool for background tasks
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        
+        # Set background monitoring parameters
+        self.background_monitoring = True
+        self.show_verbose_logs = True
+        
+        # Show a welcome message
+        self.log("System Utilities initialized successfully", "info")
+        self.update_status("Ready")
+        
+        # Start background monitoring
+        self.start_background_monitoring()
+        
+        # Periodically collect garbage to prevent memory leaks
+        def garbage_collect():
+            import gc
+            gc.collect()
+            self.root.after(300000, garbage_collect)  # Every 5 minutes
+        
+        # Start the garbage collection timer
+        self.root.after(300000, garbage_collect)
+    
+    def on_tab_changed(self, event):
+        """Handle tab change event to collect and show relevant system information"""
+        tab_id = self.tabs.select()
+        tab_name = self.tabs.tab(tab_id, "text")
+        
+        # Log the tab change
+        self.log(f"Switched to {tab_name} tab", "info")
+        
+        # Show relevant system information based on the tab
+        if tab_name == "Network":
+            self.log_network_info()
+        elif tab_name == "Hyper-V":
+            self.log_hyperv_info()
+        elif tab_name == "Optimize":
+            self.log_performance_info()
+        elif tab_name == "Storage":
+            self.log_storage_info()
+    
+    def start_background_monitoring(self):
+        """Start background monitoring threads"""
+        self.log("Starting background system monitoring...", "background")
+        
+        # Start network monitoring thread
+        network_thread = Thread(target=self._monitor_network_activity)
+        network_thread.daemon = True
+        network_thread.start()
+        
+        # Start performance monitoring thread
+        performance_thread = Thread(target=self._monitor_system_performance)
+        performance_thread.daemon = True
+        performance_thread.start()
+        
+        # Start Hyper-V monitoring thread (if applicable)
+        hyperv_thread = Thread(target=self._monitor_hyperv_status)
+        hyperv_thread.daemon = True
+        hyperv_thread.start()
+    
+    def _monitor_network_activity(self):
+        """Background thread to monitor network activity"""
+        try:
+            # Initialize network stats
+            prev_net_io = psutil.net_io_counters()
+            
+            while self.background_monitoring:
+                time.sleep(10)  # Check every 10 seconds
+                
+                try:
+                    # Get current network stats
+                    net_io = psutil.net_io_counters()
+                    
+                    # Calculate data transferred since last check
+                    sent_mb = (net_io.bytes_sent - prev_net_io.bytes_sent) / (1024 * 1024)
+                    recv_mb = (net_io.bytes_recv - prev_net_io.bytes_recv) / (1024 * 1024)
+                    
+                    # Log significant network activity
+                    if sent_mb > 5 or recv_mb > 5:  # Only log if more than 5MB in 10 seconds
+                        self.root.after(0, lambda s=sent_mb, r=recv_mb: 
+                                    self.log(f"Data transfer: {s:.2f}MB sent, {r:.2f}MB received in last 10 seconds", "network"))
+                    
+                    # Update previous stats
+                    prev_net_io = net_io
+                    
+                    # Check for connection changes every 30 seconds
+                    if time.time() % 30 < 10:
+                        try:
+                            # Get connection stats (requires admin on Windows)
+                            # This might fail on non-admin, which is fine
+                            connections = len(psutil.net_connections())
+                            self.root.after(0, lambda c=connections: 
+                                        self.log(f"Active network connections: {c}", "network"))
+                        except:
+                            pass
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Network monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in network monitoring thread: {str(e)}")
+    
+    def _monitor_system_performance(self):
+        """Background thread to monitor system performance"""
+        try:
+            while self.background_monitoring:
+                time.sleep(15)  # Check every 15 seconds
+                
+                try:
+                    # Get system performance metrics
+                    cpu_percent = psutil.cpu_percent(interval=1)
+                    memory = psutil.virtual_memory()
+                    
+                    # Log when system is under high load
+                    if cpu_percent > 75:
+                        self.root.after(0, lambda p=cpu_percent: 
+                                    self.log(f"High CPU usage: {p}%", "system"))
+                    
+                    if memory.percent > 80:
+                        self.root.after(0, lambda p=memory.percent: 
+                                    self.log(f"High memory usage: {p}%", "system"))
+                    
+                    # Periodically log general system info (every 60 seconds)
+                    if time.time() % 60 < 15:
+                        # Get disk I/O
+                        try:
+                            disk_io = psutil.disk_io_counters()
+                            if hasattr(self, 'prev_disk_io'):
+                                read_mb = (disk_io.read_bytes - self.prev_disk_io.read_bytes) / (1024 * 1024)
+                                write_mb = (disk_io.write_bytes - self.prev_disk_io.write_bytes) / (1024 * 1024)
+                                
+                                if read_mb > 50 or write_mb > 50:  # Only log high activity
+                                    self.root.after(0, lambda r=read_mb, w=write_mb: 
+                                                self.log(f"Disk activity: {r:.2f}MB read, {w:.2f}MB written in last minute", "system"))
+                            
+                            self.prev_disk_io = disk_io
+                        except:
+                            pass
+                    
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Performance monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in performance monitoring thread: {str(e)}")
+    
+    def _monitor_hyperv_status(self):
+        """Background thread to monitor Hyper-V status"""
+        try:
+            # Initial delay to not overload startup
+            time.sleep(20)
+            
+            while self.background_monitoring:
+                # Check less frequently
+                time.sleep(60)
+                
+                try:
+                    # Only do this check on Windows
+                    if platform.system() != 'Windows':
+                        continue
+                    
+                    # Check Hyper-V status using PowerShell
+                    ps_command = [
+                        "powershell",
+                        "-Command",
+                        "(Get-Service -Name 'vmms' -ErrorAction SilentlyContinue).Status"
+                    ]
+                    
+                    process = subprocess.Popen(
+                        ps_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    
+                    stdout, stderr = process.communicate(timeout=10)
+                    
+                    if process.returncode == 0 and stdout.strip():
+                        status = stdout.strip()
+                        if status == "Running":
+                            # Log running VMs
+                            try:
+                                vm_command = [
+                                    "powershell",
+                                    "-Command",
+                                    "Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name"
+                                ]
+                                
+                                vm_process = subprocess.Popen(
+                                    vm_command,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                
+                                vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
+                                
+                                if vm_process.returncode == 0 and vm_stdout.strip():
+                                    running_vms = vm_stdout.strip().split('\n')
+                                    running_vms = [vm.strip() for vm in running_vms if vm.strip()]
+                                    
+                                    if running_vms:
+                                        self.root.after(0, lambda vms=running_vms: 
+                                                    self.log(f"Running VMs: {', '.join(vms)}", "hyperv"))
+                            except:
+                                pass
+                
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Hyper-V monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in Hyper-V monitoring thread: {str(e)}")
+    
+    def log_network_info(self):
+        """Log detailed network information when network tab is selected"""
+        self.log("Collecting network information...", "network")
+        
+        # Start thread to collect detailed network info
+        network_info_thread = Thread(target=self._collect_network_info)
+        network_info_thread.daemon = True
+        network_info_thread.start()
+    
+    def _collect_network_info(self):
+        """Collect detailed network information in a background thread"""
+        try:
+            # Get network interfaces
+            interfaces = psutil.net_if_addrs()
+            active_interfaces = []
+            
+            for interface, addrs in interfaces.items():
+                for addr in addrs:
+                    if addr.family == socket.AF_INET and not addr.address.startswith('127.'):
+                        active_interfaces.append(f"{interface}: {addr.address}")
+            
+            if active_interfaces:
+                self.root.after(0, lambda ifs=active_interfaces: 
+                            self.log(f"Active network interfaces: {', '.join(ifs)}", "network"))
+            
+            # Get default gateway
+            try:
+                gateways = psutil.net_if_stats()
+                for name, stats in gateways.items():
+                    if stats.isup:
+                        self.root.after(0, lambda n=name, s=stats: 
+                                    self.log(f"Interface {n} is up, speed: {s.speed} Mbps", "network"))
+            except:
+                pass
+            
+            # Check internet connectivity
+            try:
+                # Try to get external IP
+                urls = ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]
+                
+                import urllib.request
+                
+                for url in urls:
+                    try:
+                        response = urllib.request.urlopen(url, timeout=3)
+                        data = response.read().decode('utf-8')
+                        external_ip = data.strip()
+                        self.root.after(0, lambda ip=external_ip: 
+                                    self.log(f"Internet connection active, external IP: {ip}", "network"))
+                        break
+                    except:
+                        continue
+            except:
+                pass
+            
+        except Exception as e:
+            print(f"Error collecting network info: {str(e)}")
+    
+    def log_hyperv_info(self):
+        """Log detailed Hyper-V information when Hyper-V tab is selected"""
+        self.log("Collecting Hyper-V information...", "hyperv")
+        
+        # Start thread to collect detailed Hyper-V info
+        hyperv_info_thread = Thread(target=self._collect_hyperv_info)
+        hyperv_info_thread.daemon = True
+        hyperv_info_thread.start()
+    
+    def _collect_hyperv_info(self):
+        """Collect detailed Hyper-V information in a background thread"""
+        try:
+            # Check Hyper-V status
+            ps_command = [
+                "powershell",
+                "-Command",
+                "(Get-WindowsOptionalFeature -FeatureName Microsoft-Hyper-V-All -Online -ErrorAction SilentlyContinue).State"
+            ]
+            
+            process = subprocess.Popen(
+                ps_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            stdout, stderr = process.communicate(timeout=10)
+            
+            if process.returncode == 0 and stdout.strip():
+                state = stdout.strip()
+                is_enabled = state == "Enabled"
+                
+                if is_enabled:
+                    self.root.after(0, lambda: self.log("Hyper-V is enabled on this system", "hyperv"))
+                    
+                    # Get VM count
+                    vm_command = [
+                        "powershell",
+                        "-Command",
+                        "Get-VM -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count"
+                    ]
+                    
+                    vm_process = subprocess.Popen(
+                        vm_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    
+                    vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
+                    
+                    if vm_process.returncode == 0 and vm_stdout.strip():
+                        try:
+                            vm_count = int(vm_stdout.strip())
+                            self.root.after(0, lambda c=vm_count: 
+                                        self.log(f"Found {c} virtual machines", "hyperv"))
+                            
+                            # Get running VMs
+                            if vm_count > 0:
+                                running_command = [
+                                    "powershell",
+                                    "-Command",
+                                    "Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name"
+                                ]
+                                
+                                running_process = subprocess.Popen(
+                                    running_command,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                
+                                running_stdout, running_stderr = running_process.communicate(timeout=10)
+                                
+                                if running_process.returncode == 0 and running_stdout.strip():
+                                    running_vms = running_stdout.strip().split('\n')
+                                    running_vms = [vm.strip() for vm in running_vms if vm.strip()]
+                                    
+                                    if running_vms:
+                                        self.root.after(0, lambda vms=running_vms: 
+                                                    self.log(f"Running VMs: {', '.join(vms)}", "hyperv"))
+                        except Exception as e:
+                            self.log(f"Error getting Hyper-V info: {str(e)}", "error")
+        
+        except Exception as e:
+            print(f"Error collecting Hyper-V info: {str(e)}")
+    
+    def log_performance_info(self):
+        """Log detailed performance information when Optimize tab is selected"""
+        self.log("Collecting performance information...", "optimize")
+        
+        # Start thread to collect detailed performance info
+        performance_info_thread = Thread(target=self._collect_performance_info)
+        performance_info_thread.daemon = True
+        performance_info_thread.start()
+    
+    def _collect_performance_info(self):
+        """Collect detailed performance information in a background thread"""
+        try:
+            # Get CPU info
+            cpu_info = psutil.cpu_freq()
+            self.root.after(0, lambda i=cpu_info: 
+                        self.log(f"CPU frequency: {i.current} MHz (min: {i.min} MHz, max: {i.max} MHz)", "optimize"))
+            
+            # Get memory info
+            memory_info = psutil.virtual_memory()
+            self.root.after(0, lambda m=memory_info: 
+                        self.log(f"Memory: {m.total / (1024 ** 3):.2f} GB (used: {m.used / (1024 ** 3):.2f} GB, free: {m.free / (1024 ** 3):.2f} GB)", "optimize"))
+            
+            # Get disk info
+            disk_info = psutil.disk_usage('/')
+            self.root.after(0, lambda d=disk_info: 
+                        self.log(f"Disk: {d.total / (1024 ** 3):.2f} GB (used: {d.used / (1024 ** 3):.2f} GB, free: {d.free / (1024 ** 3):.2f} GB)", "optimize"))
+            
+            # Get network info
+            network_info = psutil.net_io_counters()
+            self.root.after(0, lambda n=network_info: 
+                        self.log(f"Network: sent {n.bytes_sent / (1024 ** 2):.2f} MB, received {n.bytes_recv / (1024 ** 2):.2f} MB", "optimize"))
+            
+            # Get boot time
+            boot_time = psutil.boot_time()
+            boot_time_str = datetime.fromtimestamp(boot_time).strftime("%Y-%m-%d %H:%M:%S")
+            self.root.after(0, lambda bt=boot_time_str: 
+                        self.log(f"System boot time: {bt}", "optimize"))
+            
+            # Get uptime
+            uptime = time.time() - boot_time
+            uptime_str = str(datetime.timedelta(seconds=int(uptime)))
+            self.root.after(0, lambda ut=uptime_str: 
+                        self.log(f"System uptime: {ut}", "optimize"))
+            
+            # Get running processes
+            processes = psutil.process_iter(['pid', 'name', 'username'])
+            process_list = [f"{p.info['pid']}: {p.info['name']} ({p.info['username']})" for p in processes]
+            self.root.after(0, lambda pl=process_list: 
+                        self.log(f"Running processes: {', '.join(pl)}", "optimize"))
+            
+            # Get system information
+            system_info = platform.uname()
+            self.root.after(0, lambda si=system_info: 
+                        self.log(f"System: {si.system} {si.release} ({si.version}), {si.machine}", "optimize"))
+            
+            # Get Python version
+            python_version = platform.python_version()
+            self.root.after(0, lambda pv=python_version: 
+                        self.log(f"Python version: {pv}", "optimize"))
+            
+            # Get environment variables
+            env_vars = os.environ
+            self.root.after(0, lambda ev=env_vars: 
+                        self.log(f"Environment variables: {', '.join([f'{k}={v}' for k, v in ev.items()])}", "optimize"))
+            
+            # Get installed packages
+            try:
+                import pkg_resources
+                installed_packages = [f"{i.key}=={i.version}" for i in pkg_resources.working_set]
+                self.root.after(0, lambda ip=installed_packages: 
+                            self.log(f"Installed packages: {', '.join(ip)}", "optimize"))
+            except ImportError:
+                pass
+        except Exception as e:
+            print(f"Error collecting performance info: {str(e)}")
+    
+    def log_storage_info(self):
+        """Log detailed storage information when Storage tab is selected"""
+        self.log("Collecting storage information...", "storage")
+        
+        # Start thread to collect detailed storage info
+        storage_info_thread = Thread(target=self._collect_storage_info)
+        storage_info_thread.daemon = True
+        storage_info_thread.start()
+    
+    def _collect_storage_info(self):
+        """Collect detailed storage information in a background thread"""
+        try:
+            # Get disk usage
+            disk_usage = psutil.disk_usage('/')
+            self.root.after(0, lambda du=disk_usage: 
+                        self.log(f"Disk usage: {du.percent}% ({du.used / (1024 ** 3):.2f} GB used, {du.free / (1024 ** 3):.2f} GB free)", "storage"))
+            
+            # Get disk partitions
+            partitions = psutil.disk_partitions(all=False)
+            for p in partitions:
+                partition_info = psutil.disk_usage(p.mountpoint)
+                self.root.after(0, lambda pi=partition_info, p=p: 
+                            self.log(f"Partition {p.device} ({p.fstype}): {pi.percent}% ({pi.used / (1024 ** 3):.2f} GB used, {pi.free / (1024 ** 3):.2f} GB free)", "storage"))
+            
+            # Get mounted drives
+            drives = psutil.disk_partitions(all=True)
+            for d in drives:
+                if d.fstype:
+                    drive_info = psutil.disk_usage(d.mountpoint)
+                    self.root.after(0, lambda di=drive_info, d=d: 
+                                self.log(f"Drive {d.device} ({d.fstype}): {di.percent}% ({di.used / (1024 ** 3):.2f} GB used, {di.free / (1024 ** 3):.2f} GB free)", "storage"))
+        except Exception as e:
+            print(f"Error collecting storage info: {str(e)}")
+    
+    def create_log_area(self):
+        """Create the log area on the right side"""
+        self.log_frame = ttk.Frame(self.right_frame, style='TFrame')
+        self.log_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, wrap=tk.WORD, font=LOG_FONT, state=tk.DISABLED)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a tag for each log level
+        self.log_text.tag_configure("info", foreground="black")
+        self.log_text.tag_configure("warning", foreground=WARNING_FG, background=WARNING_BG)
+        self.log_text.tag_configure("error", foreground=ERROR_FG, background=ERROR_BG)
+        self.log_text.tag_configure("success", foreground=SUCCESS_FG, background=SUCCESS_BG)
+        self.log_text.tag_configure("network", foreground="#007AFF")  # Blue for network
+        self.log_text.tag_configure("hyperv", foreground="#FF9500")  # Orange for Hyper-V
+        self.log_text.tag_configure("optimize", foreground="#00B359")  # Green for optimization
+        self.log_text.tag_configure("storage", foreground="#8E44AD")  # Purple for storage
+        self.log_text.tag_configure("system", foreground="#2C3E50")  # Dark gray for system
+        self.log_text.tag_configure("background", foreground="#7F8C8D")  # Light gray for background
+        
+        # Create a tag for the timestamp
+        self.log_text.tag_configure("timestamp", foreground="#555555")  # Gray for timestamp
+        
+        # Create a tag for the log level indicator
+        self.log_text.tag_configure("level", font=("Segoe UI", 9, "bold"))
+        
+        # Create a tag for the log message
+        self.log_text.tag_configure("message", font=LOG_FONT)
+        
+        # Create a tag for the separator line
+        self.log_text.tag_configure("separator", foreground="#CCCCCC")
+    
+    def log(self, message, level="info"):
+        """Log a message to the log area"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        formatted_message = f"[{timestamp}] [{level.upper()}] {message}\n"
+        
+        # Insert the message with the appropriate tag
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.insert(tk.END, formatted_message, (level, "timestamp", "level", "message"))
+        self.log_text.insert(tk.END, "-" * 50 + "\n", "separator")
+        self.log_text.configure(state=tk.DISABLED)
+        
+        # Autoscroll to the end
+        self.log_text.see(tk.END)
+    
+    def update_status(self, message):
+        """Update the status bar with a message"""
+        self.status_bar.config(text=message)
+    
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext, filedialog, simpledialog
+import subprocess
+import os
+import sys
+import tempfile
+import ctypes
+import shutil
+from threading import Thread
+import threading
+import re
+import psutil
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import platform
+import glob
+import winreg
+from datetime import datetime
+import time
+import csv
+import socket
+import functools
+import traceback
+import concurrent.futures
+import fnmatch
+
+try:
+    import winshell
+except ImportError:
+    pass  # Handle later in the code
+
+# Set better UI fonts and colors
+HEADING_FONT = ('Segoe UI', 12, 'bold')
+NORMAL_FONT = ('Segoe UI', 10)
+BUTTON_FONT = ('Segoe UI', 9)
+DESCRIPTION_FONT = ('Segoe UI', 9)
+LOG_FONT = ('Consolas', 9)
+
+# Color scheme
+BG_COLOR = "#f5f5f5"
+PRIMARY_COLOR = "#3498db"
+SECONDARY_COLOR = "#e74c3c"
+ACCENT_COLOR = "#2ecc71"
+TEXT_COLOR = "#333333"
+WARNING_BG = "#fff3cd"
+WARNING_FG = "#856404"
+ERROR_BG = "#f8d7da"
+ERROR_FG = "#721c24"
+SUCCESS_BG = "#d4edda"
+SUCCESS_FG = "#155724"
+LOG_BG = "#f8f9fa"
+
+# Thread safety lock for UI updates
+ui_lock = threading.Lock()
+
+# Global exception handler to prevent application crashes
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    """Global exception handler to prevent crashes"""
+    # Format the exception
+    error_msg = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    # Log to console
+    print(f"Unhandled exception: {error_msg}")
+    # Show error message in dialog if possible
+    try:
+        messagebox.showerror("Unhandled Error", 
+                            f"An unexpected error occurred:
+
+{str(exc_value)}
+
+See console for details.")
+    except:
+        # If messagebox fails, just print to console
+        print("Could not show error dialog")
+    # Return True to prevent the default tkinter error dialog
+    return True
+
+# Install the exception handler
+sys.excepthook = global_exception_handler
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+def run_as_admin():
+    # Get the script path
+    script_path = os.path.abspath(sys.argv[0])
+    
+    # Only run if we have a valid path (not running from IDLE, etc.)
+    if os.path.exists(script_path):
+        try:
+            # Use ShellExecuteW to run the script as admin
+            ctypes.windll.shell32.ShellExecuteW(
+                None, 
+                "runas", 
+                sys.executable, 
+                f'"{script_path}"', 
+                None, 
+                1
+            )
+        except Exception as e:
+            print(f"Error running as admin: {e}")
+            # If there's an error, don't exit - just log it and continue without admin
+            return False
+    else:
+        print("Could not determine script path")
+        return False
+    return True
+
+def is_windows_10_or_11():
+    """Check if the current system is running Windows 10 or 11"""
+    try:
+        # Get Windows version
+        win_ver = platform.win32_ver()
+        win_version = win_ver[0]  # Major version
+        win_build = win_ver[1]    # Build number
+        
+        # Windows 10 build numbers start from 10240 (RTM)
+        # Windows 11 build numbers start from 22000
+        if win_version == '10':
+            build_num = int(win_build.split('.')[0])
+            return build_num >= 10240
+        else:
+            # Try to determine based on registry
+            try:
+                reg_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
+                                        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+                build_num = int(winreg.QueryValueEx(reg_key, "CurrentBuildNumber")[0])
+                winreg.CloseKey(reg_key)
+                
+                # Windows 11 builds are 22000+
+                return build_num >= 10240
+            except:
+                # If we can't determine, we'll assume it's not compatible
+                return False
+    except:
+        return False
+
+def handle_exception(func):
+    """Decorator for handling exceptions in methods"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            # Log the exception
+            self.log(f"Error in {func.__name__}: {str(e)}", 'error')
+            # Log the traceback for debugging
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", 'error')
+            # Show error message to user
+            self.update_status(f"Error in {func.__name__}")
+            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:
+
+{str(e)}")
+            return None
+    return wrapper
+
+def thread_safe(func):
+    """Decorator for ensuring thread-safe UI updates"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with ui_lock:
+            return func(self, *args, **kwargs)
+    return wrapper
+
+class SystemUtilities:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Windows System Utilities")
+        
+        # Make window open in fullscreen by default
+        self.root.state('zoomed')  # For Windows, this maximizes the window
+        
+        # Get screen dimensions for responsive design
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Set minimum size for the window
+        self.root.minsize(900, 600)
+        
+        # Set the application icon
+        try:
+            self.root.iconbitmap("system_icon.ico")
+        except:
+            # Icon file not found, continue without it
+            pass
+        
+        # Configure the style for better appearance
+        self.style = ttk.Style()
+        # Apply clam theme if available
+        if 'clam' in self.style.theme_names():
+            self.style.theme_use('clam')
+            
+        self.style.configure('TFrame', background=BG_COLOR)
+        self.style.configure('Tab.TFrame', background=BG_COLOR)
+        self.style.configure('TLabel', background=BG_COLOR, foreground=TEXT_COLOR, font=NORMAL_FONT)
+        self.style.configure('Header.TLabel', font=HEADING_FONT, foreground=PRIMARY_COLOR)
+        self.style.configure('TButton', font=BUTTON_FONT)
+        self.style.configure('Primary.TButton', background=PRIMARY_COLOR)
+        self.style.configure('Secondary.TButton', background=SECONDARY_COLOR)
+        self.style.configure('Accent.TButton', background=ACCENT_COLOR)
+        self.style.configure('TLabelframe', background=BG_COLOR)
+        self.style.configure('Group.TLabelframe', background=BG_COLOR)
+        self.style.configure('Group.TLabelframe.Label', background=BG_COLOR, foreground=TEXT_COLOR, font=NORMAL_FONT)
+        
+        # Set up the main frame with split-pane layout
+        main_frame = ttk.Frame(root, style='TFrame')
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create PanedWindow for split layout
+        self.paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Left side - Tool tabs
+        self.left_frame = ttk.Frame(self.paned, style='TFrame')
+        
+        # Right side - Logs and status
+        self.right_frame = ttk.Frame(self.paned, style='TFrame')
+        
+        # Add the frames to the paned window
+        self.paned.add(self.left_frame, weight=3)
+        self.paned.add(self.right_frame, weight=1)
+        
+        # Create tabs on the left side
+        self.tabs = ttk.Notebook(self.left_frame)
+        self.tabs.pack(fill=tk.BOTH, expand=True)
+        
+        # Create the tabs
+        self.cleanup_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.system_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.update_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.storage_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.network_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.hyperv_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        self.optimize_tab = ttk.Frame(self.tabs, style='Tab.TFrame')
+        
+        # Add tabs to the notebook
+        self.tabs.add(self.cleanup_tab, text="Cleanup")
+        self.tabs.add(self.system_tab, text="System Tools")
+        self.tabs.add(self.update_tab, text="Windows Update")
+        self.tabs.add(self.storage_tab, text="Storage")
+        self.tabs.add(self.network_tab, text="Network")
+        self.tabs.add(self.hyperv_tab, text="Hyper-V")
+        self.tabs.add(self.optimize_tab, text="Optimize")
+        
+        # Add tab change event 
+        self.tabs.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        
+        # Set up the log area on the right side
+        self.create_log_area()
+        
+        # Initialize tab contents
+        self.init_cleanup_tab()
+        self.init_system_tab()
+        self.init_update_tab()
+        self.init_storage_tab()
+        self.init_network_tab()
+        self.init_hyperv_tab()
+        self.init_optimize_tab()
+        
+        # Add status bar at the bottom
+        self.status_bar = ttk.Label(root, text="Ready", relief=tk.SUNKEN, anchor=tk.W, font=NORMAL_FONT)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Initialize the thread pool for background tasks
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        
+        # Set background monitoring parameters
+        self.background_monitoring = True
+        self.show_verbose_logs = True
+        
+        # Show a welcome message
+        self.log("System Utilities initialized successfully", "info")
+        self.update_status("Ready")
+        
+        # Start background monitoring
+        self.start_background_monitoring()
+        
+        # Periodically collect garbage to prevent memory leaks
+        def garbage_collect():
+            import gc
+            gc.collect()
+            self.root.after(300000, garbage_collect)  # Every 5 minutes
+        
+        # Start the garbage collection timer
+        self.root.after(300000, garbage_collect)
+    
+    def on_tab_changed(self, event):
+        """Handle tab change event to collect and show relevant system information"""
+        tab_id = self.tabs.select()
+        tab_name = self.tabs.tab(tab_id, "text")
+        
+        # Log the tab change
+        self.log(f"Switched to {tab_name} tab", "info")
+        
+        # Show relevant system information based on the tab
+        if tab_name == "Network":
+            self.log_network_info()
+        elif tab_name == "Hyper-V":
+            self.log_hyperv_info()
+        elif tab_name == "Optimize":
+            self.log_performance_info()
+        elif tab_name == "Storage":
+            self.log_storage_info()
+    
+    def start_background_monitoring(self):
+        """Start background monitoring threads"""
+        self.log("Starting background system monitoring...", "background")
+        
+        # Start network monitoring thread
+        network_thread = Thread(target=self._monitor_network_activity)
+        network_thread.daemon = True
+        network_thread.start()
+        
+        # Start performance monitoring thread
+        performance_thread = Thread(target=self._monitor_system_performance)
+        performance_thread.daemon = True
+        performance_thread.start()
+        
+        # Start Hyper-V monitoring thread (if applicable)
+        hyperv_thread = Thread(target=self._monitor_hyperv_status)
+        hyperv_thread.daemon = True
+        hyperv_thread.start()
+    
+    def _monitor_network_activity(self):
+        """Background thread to monitor network activity"""
+        try:
+            # Initialize network stats
+            prev_net_io = psutil.net_io_counters()
+            
+            while self.background_monitoring:
+                time.sleep(10)  # Check every 10 seconds
+                
+                try:
+                    # Get current network stats
+                    net_io = psutil.net_io_counters()
+                    
+                    # Calculate data transferred since last check
+                    sent_mb = (net_io.bytes_sent - prev_net_io.bytes_sent) / (1024 * 1024)
+                    recv_mb = (net_io.bytes_recv - prev_net_io.bytes_recv) / (1024 * 1024)
+                    
+                    # Log significant network activity
+                    if sent_mb > 5 or recv_mb > 5:  # Only log if more than 5MB in 10 seconds
+                        self.root.after(0, lambda s=sent_mb, r=recv_mb: 
+                                    self.log(f"Data transfer: {s:.2f}MB sent, {r:.2f}MB received in last 10 seconds", "network"))
+                    
+                    # Update previous stats
+                    prev_net_io = net_io
+                    
+                    # Check for connection changes every 30 seconds
+                    if time.time() % 30 < 10:
+                        try:
+                            # Get connection stats (requires admin on Windows)
+                            # This might fail on non-admin, which is fine
+                            connections = len(psutil.net_connections())
+                            self.root.after(0, lambda c=connections: 
+                                        self.log(f"Active network connections: {c}", "network"))
+                        except:
+                            pass
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Network monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in network monitoring thread: {str(e)}")
+    
+    def _monitor_system_performance(self):
+        """Background thread to monitor system performance"""
+        try:
+            while self.background_monitoring:
+                time.sleep(15)  # Check every 15 seconds
+                
+                try:
+                    # Get system performance metrics
+                    cpu_percent = psutil.cpu_percent(interval=1)
+                    memory = psutil.virtual_memory()
+                    
+                    # Log when system is under high load
+                    if cpu_percent > 75:
+                        self.root.after(0, lambda p=cpu_percent: 
+                                    self.log(f"High CPU usage: {p}%", "system"))
+                    
+                    if memory.percent > 80:
+                        self.root.after(0, lambda p=memory.percent: 
+                                    self.log(f"High memory usage: {p}%", "system"))
+                    
+                    # Periodically log general system info (every 60 seconds)
+                    if time.time() % 60 < 15:
+                        # Get disk I/O
+                        try:
+                            disk_io = psutil.disk_io_counters()
+                            if hasattr(self, 'prev_disk_io'):
+                                read_mb = (disk_io.read_bytes - self.prev_disk_io.read_bytes) / (1024 * 1024)
+                                write_mb = (disk_io.write_bytes - self.prev_disk_io.write_bytes) / (1024 * 1024)
+                                
+                                if read_mb > 50 or write_mb > 50:  # Only log high activity
+                                    self.root.after(0, lambda r=read_mb, w=write_mb: 
+                                                self.log(f"Disk activity: {r:.2f}MB read, {w:.2f}MB written in last minute", "system"))
+                            
+                            self.prev_disk_io = disk_io
+                        except:
+                            pass
+                    
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Performance monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in performance monitoring thread: {str(e)}")
+    
+    def _monitor_hyperv_status(self):
+        """Background thread to monitor Hyper-V status"""
+        try:
+            # Initial delay to not overload startup
+            time.sleep(20)
+            
+            while self.background_monitoring:
+                # Check less frequently
+                time.sleep(60)
+                
+                try:
+                    # Only do this check on Windows
+                    if platform.system() != 'Windows':
+                        continue
+                    
+                    # Check Hyper-V status using PowerShell
+                    ps_command = [
+                        "powershell",
+                        "-Command",
+                        "(Get-Service -Name 'vmms' -ErrorAction SilentlyContinue).Status"
+                    ]
+                    
+                    process = subprocess.Popen(
+                        ps_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    
+                    stdout, stderr = process.communicate(timeout=10)
+                    
+                    if process.returncode == 0 and stdout.strip():
+                        status = stdout.strip()
+                        if status == "Running":
+                            # Log running VMs
+                            try:
+                                vm_command = [
+                                    "powershell",
+                                    "-Command",
+                                    "Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name"
+                                ]
+                                
+                                vm_process = subprocess.Popen(
+                                    vm_command,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                
+                                vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
+                                
+                                if vm_process.returncode == 0 and vm_stdout.strip():
+                                    running_vms = vm_stdout.strip().split('
+')
+                                    running_vms = [vm.strip() for vm in running_vms if vm.strip()]
+                                    
+                                    if running_vms:
+                                        self.root.after(0, lambda vms=running_vms: 
+                                                    self.log(f"Running VMs: {', '.join(vms)}", "hyperv"))
+                            except:
+                                pass
+                
+                except Exception as e:
+                    # Silent fail for background monitoring
+                    print(f"Hyper-V monitoring error: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error in Hyper-V monitoring thread: {str(e)}")
+    
+    def log_network_info(self):
+        """Log detailed network information when network tab is selected"""
+        self.log("Collecting network information...", "network")
+        
+        # Start thread to collect detailed network info
+        network_info_thread = Thread(target=self._collect_network_info)
+        network_info_thread.daemon = True
+        network_info_thread.start()
+    
+    def _collect_network_info(self):
+        """Collect detailed network information in a background thread"""
+        try:
+            # Get network interfaces
+            interfaces = psutil.net_if_addrs()
+            active_interfaces = []
+            
+            for interface, addrs in interfaces.items():
+                for addr in addrs:
+                    if addr.family == socket.AF_INET and not addr.address.startswith('127.'):
+                        active_interfaces.append(f"{interface}: {addr.address}")
+            
+            if active_interfaces:
+                self.root.after(0, lambda ifs=active_interfaces: 
+                            self.log(f"Active network interfaces: {', '.join(ifs)}", "network"))
+            
+            # Get default gateway
+            try:
+                gateways = psutil.net_if_stats()
+                for name, stats in gateways.items():
+                    if stats.isup:
+                        self.root.after(0, lambda n=name, s=stats: 
+                                    self.log(f"Interface {n} is up, speed: {s.speed} Mbps", "network"))
+            except:
+                pass
+            
+            # Check internet connectivity
+            try:
+                # Try to get external IP
+                urls = ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"]
+                
+                import urllib.request
+                
+                for url in urls:
+                    try:
+                        response = urllib.request.urlopen(url, timeout=3)
+                        data = response.read().decode('utf-8')
+                        external_ip = data.strip()
+                        self.root.after(0, lambda ip=external_ip: 
+                                    self.log(f"Internet connection active, external IP: {ip}", "network"))
+                        break
+                    except:
+                        continue
+            except:
+                pass
+            
+        except Exception as e:
+            print(f"Error collecting network info: {str(e)}")
+    
+    def log_hyperv_info(self):
+        """Log detailed Hyper-V information when Hyper-V tab is selected"""
+        self.log("Collecting Hyper-V information...", "hyperv")
+        
+        # Start thread to collect detailed Hyper-V info
+        hyperv_info_thread = Thread(target=self._collect_hyperv_info)
+        hyperv_info_thread.daemon = True
+        hyperv_info_thread.start()
+    
+    def _collect_hyperv_info(self):
+        """Collect detailed Hyper-V information in a background thread"""
+        try:
+            # Check Hyper-V status
+            ps_command = [
+                "powershell",
+                "-Command",
+                "(Get-WindowsOptionalFeature -FeatureName Microsoft-Hyper-V-All -Online -ErrorAction SilentlyContinue).State"
+            ]
+            
+            process = subprocess.Popen(
+                ps_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            stdout, stderr = process.communicate(timeout=10)
+            
+            if process.returncode == 0 and stdout.strip():
+                state = stdout.strip()
+                is_enabled = state == "Enabled"
+                
+                if is_enabled:
+                    self.root.after(0, lambda: self.log("Hyper-V is enabled on this system", "hyperv"))
+                    
+                    # Get VM count
+                    vm_command = [
+                        "powershell",
+                        "-Command",
+                        "Get-VM -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count"
+                    ]
+                    
+                    vm_process = subprocess.Popen(
+                        vm_command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    
+                    vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
+                    
+                    if vm_process.returncode == 0 and vm_stdout.strip():
+                        try:
+                            vm_count = int(vm_stdout.strip())
+                            self.root.after(0, lambda c=vm_count: 
+                                        self.log(f"Found {c} virtual machines", "hyperv"))
+                            
+                            # Get running VMs
+                            if vm_count > 0:
+                                running_command = [
+                                    "powershell",
+                                    "-Command",
+                                    "Get-VM | Where-Object {$_.State -eq 'Running'} | Select-Object -ExpandProperty Name"
+                                ]
+                                
+                                running_process = subprocess.Popen(
+                                    running_command,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                
+                                running_stdout, running_stderr = running_process.communicate(timeout=10)
+                                
+                                if running_process.returncode == 0 and running_stdout.strip():
+                                    running_vms = running_stdout.strip().split('
+')
+                                    running_vms = [vm.strip() for vm in running_vms if vm.strip()]
+                                    
+                                    if running_vms:
+                                        self.root.after(0, lambda vms=running_vms: 
+                                                    self.log(f"Running VMs: {', '.join(vms)}", "hyperv"))
+                        except:
+                            pass
                 else:
                     self.root.after(0, lambda: self.log("Hyper-V is not enabled on this system", "hyperv"))
             else:
@@ -803,7 +3440,8 @@ class SystemUtilities:
         
         # Add a timestamp to the log
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] System Utilities started\n", "info")
+        self.log_text.insert(tk.END, f"[{timestamp}] System Utilities started
+", "info")
         
         # Add version info
         version_label = tk.Label(
@@ -880,7 +3518,11 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
     # Show error message in dialog if possible
     try:
         messagebox.showerror("Unhandled Error", 
-                            f"An unexpected error occurred:\n\n{str(exc_value)}\n\nSee console for details.")
+                            f"An unexpected error occurred:
+
+{str(exc_value)}
+
+See console for details.")
     except:
         # If messagebox fails, just print to console
         print("Could not show error dialog")
@@ -964,7 +3606,9 @@ def handle_exception(func):
             self.log(f"Traceback: {traceback.format_exc()}", 'error')
             # Show error message to user
             self.update_status(f"Error in {func.__name__}")
-            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:\n\n{str(e)}")
+            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:
+
+{str(e)}")
             return None
     return wrapper
 
@@ -1275,7 +3919,8 @@ class SystemUtilities:
                                 vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
                                 
                                 if vm_process.returncode == 0 and vm_stdout.strip():
-                                    running_vms = vm_stdout.strip().split('\n')
+                                    running_vms = vm_stdout.strip().split('
+')
                                     running_vms = [vm.strip() for vm in running_vms if vm.strip()]
                                     
                                     if running_vms:
@@ -1427,7 +4072,8 @@ class SystemUtilities:
                                 running_stdout, running_stderr = running_process.communicate(timeout=10)
                                 
                                 if running_process.returncode == 0 and running_stdout.strip():
-                                    running_vms = running_stdout.strip().split('\n')
+                                    running_vms = running_stdout.strip().split('
+')
                                     running_vms = [vm.strip() for vm in running_vms if vm.strip()]
                                     
                                     if running_vms:
@@ -1620,7 +4266,8 @@ class SystemUtilities:
         
         # Add a timestamp to the log
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.log_text.insert(tk.END, f"[{timestamp}] System Utilities started\n", "info")
+        self.log_text.insert(tk.END, f"[{timestamp}] System Utilities started
+", "info")
         
         # Add version info
         version_label = tk.Label(
@@ -1635,7 +4282,8 @@ class SystemUtilities:
     def log(self, message, level="info"):
         """Log a message to the log area"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        formatted_message = f"[{timestamp}] {message}\n"
+        formatted_message = f"[{timestamp}] {message}
+"
         
         # Update the log area in a thread-safe manner
         self.root.after(0, lambda msg=formatted_message, lvl=level: self._update_log(msg, lvl))
@@ -1794,7 +4442,11 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
     # Show error message in dialog if possible
     try:
         messagebox.showerror("Unhandled Error", 
-                            f"An unexpected error occurred:\n\n{str(exc_value)}\n\nSee console for details.")
+                            f"An unexpected error occurred:
+
+{str(exc_value)}
+
+See console for details.")
     except:
         # If messagebox fails, just print to console
         print("Could not show error dialog")
@@ -1878,7 +4530,9 @@ def handle_exception(func):
             self.log(f"Traceback: {traceback.format_exc()}", 'error')
             # Show error message to user
             self.update_status(f"Error in {func.__name__}")
-            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:\n\n{str(e)}")
+            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:
+
+{str(e)}")
             return None
     return wrapper
 
@@ -2189,7 +4843,8 @@ class SystemUtilities:
                                 vm_stdout, vm_stderr = vm_process.communicate(timeout=10)
                                 
                                 if vm_process.returncode == 0 and vm_stdout.strip():
-                                    running_vms = vm_stdout.strip().split('\n')
+                                    running_vms = vm_stdout.strip().split('
+')
                                     running_vms = [vm.strip() for vm in running_vms if vm.strip()]
                                     
                                     if running_vms:
@@ -2341,7 +4996,8 @@ class SystemUtilities:
                                 running_stdout, running_stderr = running_process.communicate(timeout=10)
                                 
                                 if running_process.returncode == 0 and running_stdout.strip():
-                                    running_vms = running_stdout.strip().split('\n')
+                                    running_vms = running_stdout.strip().split('
+')
                                     running_vms = [vm.strip() for vm in running_vms if vm.strip()]
                                     
                                     if running_vms:
@@ -2841,32 +5497,40 @@ class SystemUtilities:
         
         # Format based on log level
         if level == "error":
-            formatted_msg = f"[{timestamp}] ERROR: {message}\n"
+            formatted_msg = f"[{timestamp}] ERROR: {message}
+"
             tag = "error"
         elif level == "warning":
-            formatted_msg = f"[{timestamp}] WARNING: {message}\n"
+            formatted_msg = f"[{timestamp}] WARNING: {message}
+"
             tag = "warning"
         elif level == "success":
-            formatted_msg = f"[{timestamp}] SUCCESS: {message}\n"
+            formatted_msg = f"[{timestamp}] SUCCESS: {message}
+"
             tag = "success"
         elif level == "background":
             # Special format for background activities
-            formatted_msg = f"[{timestamp}] BACKGROUND: {message}\n"
+            formatted_msg = f"[{timestamp}] BACKGROUND: {message}
+"
             tag = "info"
         elif level == "network":
             # Special format for network activities
-            formatted_msg = f"[{timestamp}] NETWORK: {message}\n"
+            formatted_msg = f"[{timestamp}] NETWORK: {message}
+"
             tag = "info"
         elif level == "hyperv":
             # Special format for Hyper-V activities
-            formatted_msg = f"[{timestamp}] HYPER-V: {message}\n"
+            formatted_msg = f"[{timestamp}] HYPER-V: {message}
+"
             tag = "info"
         elif level == "system":
             # Special format for system performance activities
-            formatted_msg = f"[{timestamp}] SYSTEM: {message}\n" 
+            formatted_msg = f"[{timestamp}] SYSTEM: {message}
+" 
             tag = "info"
         else:
-            formatted_msg = f"[{timestamp}] INFO: {message}\n"
+            formatted_msg = f"[{timestamp}] INFO: {message}
+"
             tag = "info"
         
         self.log_text.insert(tk.END, formatted_msg, tag)
@@ -2949,7 +5613,9 @@ class SystemUtilities:
         if not is_admin():
             self.log(f"{feature_name} requires administrator privileges", 'warning')
             if messagebox.askyesno("Admin Rights Required", 
-                                 f"{feature_name} requires administrator privileges.\n\nDo you want to restart as administrator?"):
+                                 f"{feature_name} requires administrator privileges.
+
+Do you want to restart as administrator?"):
                 self.restart_as_admin()
                 return False
             return False
@@ -3104,7 +5770,9 @@ class SystemUtilities:
         if not is_admin():
             self.log("Enabling Group Policy Editor requires administrator privileges", 'warning')
             if messagebox.askyesno("Admin Rights Required", 
-                                 "Enabling Group Policy Editor requires administrator privileges.\n\nDo you want to restart as administrator?"):
+                                 "Enabling Group Policy Editor requires administrator privileges.
+
+Do you want to restart as administrator?"):
                 self.restart_as_admin()
                 return
             return
@@ -3126,7 +5794,9 @@ class SystemUtilities:
                 self.log("This feature is only needed for Windows Home editions.", 'warning')
                 self.update_status("Group Policy Editor already available")
                 messagebox.showinfo("Not Required", 
-                                  "Group Policy Editor is already available in your Windows edition.\n\nThis feature is only needed for Windows Home editions.")
+                                  "Group Policy Editor is already available in your Windows edition.
+
+This feature is only needed for Windows Home editions.")
                 return
         except Exception as e:
             self.log(f"Error detecting Windows edition: {str(e)}", 'error')
@@ -3134,7 +5804,9 @@ class SystemUtilities:
         
         # Update the description
         self.update_system_description(
-            "Enabling Group Policy Editor... This may take a few minutes.\n\n" +
+            "Enabling Group Policy Editor... This may take a few minutes.
+
+" +
             "Please do not close the application or perform other operations until this process completes."
         )
         self.root.update_idletasks()
@@ -3250,20 +5922,33 @@ pause
             
             # Update the description
             self.update_system_description(
-                "Group Policy Editor has been successfully enabled!\n\n" +
-                "You need to restart your computer for the changes to take effect.\n\n" +
-                "After restarting, you can access the Group Policy Editor by:\n" +
-                "1. Press Win+R to open the Run dialog\n" +
-                "2. Type 'gpedit.msc' and press Enter\n\n" +
-                "Note: If the Group Policy Editor doesn't work after restart, you may need to:\n" +
-                "- Verify that your Windows version is compatible\n" +
-                "- Run this tool again with administrator privileges\n" +
+                "Group Policy Editor has been successfully enabled!
+
+" +
+                "You need to restart your computer for the changes to take effect.
+
+" +
+                "After restarting, you can access the Group Policy Editor by:
+" +
+                "1. Press Win+R to open the Run dialog
+" +
+                "2. Type 'gpedit.msc' and press Enter
+
+" +
+                "Note: If the Group Policy Editor doesn't work after restart, you may need to:
+" +
+                "- Verify that your Windows version is compatible
+" +
+                "- Run this tool again with administrator privileges
+" +
                 "- Check Windows Update for any pending updates"
             )
             
             # Show success message
             messagebox.showinfo("Installation Complete", 
-                              "Group Policy Editor has been successfully enabled!\n\n" +
+                              "Group Policy Editor has been successfully enabled!
+
+" +
                               "Please restart your computer for the changes to take effect.")
         else:
             self.log(f"Group Policy Editor enabler failed: {error_message}", 'error')
@@ -3271,18 +5956,28 @@ pause
             
             # Update the description
             self.update_system_description(
-                "Failed to enable Group Policy Editor.\n\n" +
-                f"Error: {error_message}\n\n" +
-                "Possible solutions:\n" +
-                "1. Make sure you're running the application as administrator\n" +
-                "2. Verify that your Windows version is compatible\n" +
-                "3. Try disabling your antivirus temporarily during installation\n" +
+                "Failed to enable Group Policy Editor.
+
+" +
+                f"Error: {error_message}
+
+" +
+                "Possible solutions:
+" +
+                "1. Make sure you're running the application as administrator
+" +
+                "2. Verify that your Windows version is compatible
+" +
+                "3. Try disabling your antivirus temporarily during installation
+" +
                 "4. Make sure Windows is up to date"
             )
             
             # Show error message
             messagebox.showerror("Installation Failed", 
-                               f"Failed to enable Group Policy Editor:\n\n{error_message}")
+                               f"Failed to enable Group Policy Editor:
+
+{error_message}")
 
     def update_system_description(self, text):
         """Update the description in the system tab"""
@@ -3767,7 +6462,9 @@ pause
             self.root.after(0, lambda: self.log("Windows Update cache cleared successfully", "success"))
             self.root.after(0, lambda: self.update_status("Update cache cleared"))
             self.root.after(0, lambda: messagebox.showinfo("Cache Cleared", 
-                                                        "Windows Update cache has been cleared successfully.\n\n"
+                                                        "Windows Update cache has been cleared successfully.
+
+"
                                                         "You may need to restart your computer for the changes to take effect."))
             
             # Refresh the status
@@ -3789,9 +6486,13 @@ pause
         
         # Ask for confirmation as this is a significant operation
         if not messagebox.askyesno("Confirm Reset", 
-                                 "This will reset all Windows Update components to their default state.\n\n"
+                                 "This will reset all Windows Update components to their default state.
+
+"
                                  "This is a significant operation and should only be used when Windows Update "
-                                 "is experiencing serious problems.\n\n"
+                                 "is experiencing serious problems.
+
+"
                                  "Do you want to continue?"):
             self.log("Windows Update reset cancelled by user", "info")
             return
@@ -3901,13 +6602,17 @@ echo.
                 self.root.after(0, lambda: self.log("Windows Update components reset successfully", "success"))
                 self.root.after(0, lambda: self.update_status("Windows Update reset completed"))
                 self.root.after(0, lambda: messagebox.showinfo("Reset Complete", 
-                                                            "Windows Update components have been reset successfully.\n\n"
+                                                            "Windows Update components have been reset successfully.
+
+"
                                                             "Please restart your computer for the changes to take effect."))
             else:
                 self.root.after(0, lambda: self.log(f"Error during reset: {stderr}", "error"))
                 self.root.after(0, lambda: self.update_status("Error resetting Windows Update"))
                 self.root.after(0, lambda: messagebox.showerror("Error", 
-                                                             f"Error resetting Windows Update components:\n\n{stderr}"))
+                                                             f"Error resetting Windows Update components:
+
+{stderr}"))
             
             # Try to delete the temporary batch file
             try:
@@ -4070,7 +6775,11 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
     # Show error message in dialog if possible
     try:
         messagebox.showerror("Unhandled Error", 
-                            f"An unexpected error occurred:\n\n{str(exc_value)}\n\nSee console for details.")
+                            f"An unexpected error occurred:
+
+{str(exc_value)}
+
+See console for details.")
     except:
         # If messagebox fails, just print to console
         print("Could not show error dialog")
@@ -4154,7 +6863,9 @@ def handle_exception(func):
             self.log(f"Traceback: {traceback.format_exc()}", 'error')
             # Show error message to user
             self.update_status(f"Error in {func.__name__}")
-            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:\n\n{str(e)}")
+            messagebox.showerror("Error", f"An unexpected error occurred in {func.__name__}:
+
+{str(e)}")
             return None
     return wrapper
 
@@ -4815,32 +7526,40 @@ class SystemUtilities:
         
         # Format based on log level
         if level == "error":
-            formatted_msg = f"[{timestamp}] ERROR: {message}\n"
+            formatted_msg = f"[{timestamp}] ERROR: {message}
+"
             tag = "error"
         elif level == "warning":
-            formatted_msg = f"[{timestamp}] WARNING: {message}\n"
+            formatted_msg = f"[{timestamp}] WARNING: {message}
+"
             tag = "warning"
         elif level == "success":
-            formatted_msg = f"[{timestamp}] SUCCESS: {message}\n"
+            formatted_msg = f"[{timestamp}] SUCCESS: {message}
+"
             tag = "success"
         elif level == "background":
             # Special format for background activities
-            formatted_msg = f"[{timestamp}] BACKGROUND: {message}\n"
+            formatted_msg = f"[{timestamp}] BACKGROUND: {message}
+"
             tag = "info"
         elif level == "network":
             # Special format for network activities
-            formatted_msg = f"[{timestamp}] NETWORK: {message}\n"
+            formatted_msg = f"[{timestamp}] NETWORK: {message}
+"
             tag = "info"
         elif level == "hyperv":
             # Special format for Hyper-V activities
-            formatted_msg = f"[{timestamp}] HYPER-V: {message}\n"
+            formatted_msg = f"[{timestamp}] HYPER-V: {message}
+"
             tag = "info"
         elif level == "system":
             # Special format for system performance activities
-            formatted_msg = f"[{timestamp}] SYSTEM: {message}\n" 
+            formatted_msg = f"[{timestamp}] SYSTEM: {message}
+" 
             tag = "info"
         else:
-            formatted_msg = f"[{timestamp}] INFO: {message}\n"
+            formatted_msg = f"[{timestamp}] INFO: {message}
+"
             tag = "info"
         
         self.log_text.insert(tk.END, formatted_msg, tag)
@@ -4923,7 +7642,9 @@ class SystemUtilities:
         if not is_admin():
             self.log(f"{feature_name} requires administrator privileges", 'warning')
             if messagebox.askyesno("Admin Rights Required", 
-                                 f"{feature_name} requires administrator privileges.\n\nDo you want to restart as administrator?"):
+                                 f"{feature_name} requires administrator privileges.
+
+Do you want to restart as administrator?"):
                 self.restart_as_admin()
                 return False
             return False
@@ -5078,7 +7799,9 @@ class SystemUtilities:
         if not is_admin():
             self.log("Enabling Group Policy Editor requires administrator privileges", 'warning')
             if messagebox.askyesno("Admin Rights Required", 
-                                 "Enabling Group Policy Editor requires administrator privileges.\n\nDo you want to restart as administrator?"):
+                                 "Enabling Group Policy Editor requires administrator privileges.
+
+Do you want to restart as administrator?"):
                 self.restart_as_admin()
                 return
             return
@@ -5100,7 +7823,9 @@ class SystemUtilities:
                 self.log("This feature is only needed for Windows Home editions.", 'warning')
                 self.update_status("Group Policy Editor already available")
                 messagebox.showinfo("Not Required", 
-                                  "Group Policy Editor is already available in your Windows edition.\n\nThis feature is only needed for Windows Home editions.")
+                                  "Group Policy Editor is already available in your Windows edition.
+
+This feature is only needed for Windows Home editions.")
                 return
         except Exception as e:
             self.log(f"Error detecting Windows edition: {str(e)}", 'error')
@@ -5108,7 +7833,9 @@ class SystemUtilities:
         
         # Update the description
         self.update_system_description(
-            "Enabling Group Policy Editor... This may take a few minutes.\n\n" +
+            "Enabling Group Policy Editor... This may take a few minutes.
+
+" +
             "Please do not close the application or perform other operations until this process completes."
         )
         self.root.update_idletasks()
@@ -5224,20 +7951,33 @@ pause
             
             # Update the description
             self.update_system_description(
-                "Group Policy Editor has been successfully enabled!\n\n" +
-                "You need to restart your computer for the changes to take effect.\n\n" +
-                "After restarting, you can access the Group Policy Editor by:\n" +
-                "1. Press Win+R to open the Run dialog\n" +
-                "2. Type 'gpedit.msc' and press Enter\n\n" +
-                "Note: If the Group Policy Editor doesn't work after restart, you may need to:\n" +
-                "- Verify that your Windows version is compatible\n" +
-                "- Run this tool again with administrator privileges\n" +
+                "Group Policy Editor has been successfully enabled!
+
+" +
+                "You need to restart your computer for the changes to take effect.
+
+" +
+                "After restarting, you can access the Group Policy Editor by:
+" +
+                "1. Press Win+R to open the Run dialog
+" +
+                "2. Type 'gpedit.msc' and press Enter
+
+" +
+                "Note: If the Group Policy Editor doesn't work after restart, you may need to:
+" +
+                "- Verify that your Windows version is compatible
+" +
+                "- Run this tool again with administrator privileges
+" +
                 "- Check Windows Update for any pending updates"
             )
             
             # Show success message
             messagebox.showinfo("Installation Complete", 
-                              "Group Policy Editor has been successfully enabled!\n\n" +
+                              "Group Policy Editor has been successfully enabled!
+
+" +
                               "Please restart your computer for the changes to take effect.")
         else:
             self.log(f"Group Policy Editor enabler failed: {error_message}", 'error')
@@ -5245,18 +7985,28 @@ pause
             
             # Update the description
             self.update_system_description(
-                "Failed to enable Group Policy Editor.\n\n" +
-                f"Error: {error_message}\n\n" +
-                "Possible solutions:\n" +
-                "1. Make sure you're running the application as administrator\n" +
-                "2. Verify that your Windows version is compatible\n" +
-                "3. Try disabling your antivirus temporarily during installation\n" +
+                "Failed to enable Group Policy Editor.
+
+" +
+                f"Error: {error_message}
+
+" +
+                "Possible solutions:
+" +
+                "1. Make sure you're running the application as administrator
+" +
+                "2. Verify that your Windows version is compatible
+" +
+                "3. Try disabling your antivirus temporarily during installation
+" +
                 "4. Make sure Windows is up to date"
             )
             
             # Show error message
             messagebox.showerror("Installation Failed", 
-                               f"Failed to enable Group Policy Editor:\n\n{error_message}")
+                               f"Failed to enable Group Policy Editor:
+
+{error_message}")
 
     def update_system_description(self, text):
         """Update the description in the system tab"""
@@ -5741,7 +8491,9 @@ pause
             self.root.after(0, lambda: self.log("Windows Update cache cleared successfully", "success"))
             self.root.after(0, lambda: self.update_status("Update cache cleared"))
             self.root.after(0, lambda: messagebox.showinfo("Cache Cleared", 
-                                                        "Windows Update cache has been cleared successfully.\n\n"
+                                                        "Windows Update cache has been cleared successfully.
+
+"
                                                         "You may need to restart your computer for the changes to take effect."))
             
             # Refresh the status
@@ -5763,9 +8515,13 @@ pause
         
         # Ask for confirmation as this is a significant operation
         if not messagebox.askyesno("Confirm Reset", 
-                                 "This will reset all Windows Update components to their default state.\n\n"
+                                 "This will reset all Windows Update components to their default state.
+
+"
                                  "This is a significant operation and should only be used when Windows Update "
-                                 "is experiencing serious problems.\n\n"
+                                 "is experiencing serious problems.
+
+"
                                  "Do you want to continue?"):
             self.log("Windows Update reset cancelled by user", "info")
             return
@@ -5875,13 +8631,17 @@ echo.
                 self.root.after(0, lambda: self.log("Windows Update components reset successfully", "success"))
                 self.root.after(0, lambda: self.update_status("Windows Update reset completed"))
                 self.root.after(0, lambda: messagebox.showinfo("Reset Complete", 
-                                                            "Windows Update components have been reset successfully.\n\n"
+                                                            "Windows Update components have been reset successfully.
+
+"
                                                             "Please restart your computer for the changes to take effect."))
             else:
                 self.root.after(0, lambda: self.log(f"Error during reset: {stderr}", "error"))
                 self.root.after(0, lambda: self.update_status("Error resetting Windows Update"))
                 self.root.after(0, lambda: messagebox.showerror("Error", 
-                                                             f"Error resetting Windows Update components:\n\n{stderr}"))
+                                                             f"Error resetting Windows Update components:
+
+{stderr}"))
             
             # Try to delete the temporary batch file
             try:
@@ -6079,9 +8839,12 @@ echo.
             
             # Update the drive info text
             info_text = (
-                f"Drive: {drive}\n"
-                f"Total: {usage.total / (1024**3):.2f} GB\n"
-                f"Used: {usage.used / (1024**3):.2f} GB ({usage.percent}%)\n"
+                f"Drive: {drive}
+"
+                f"Total: {usage.total / (1024**3):.2f} GB
+"
+                f"Used: {usage.used / (1024**3):.2f} GB ({usage.percent}%)
+"
                 f"Free: {usage.free / (1024**3):.2f} GB"
             )
             self.drive_info_var.set(info_text)
@@ -6173,7 +8936,9 @@ echo.
             
             # Confirm with the user
             if not messagebox.askyesno("Confirm Check Disk", 
-                                     f"Do you want to run Check Disk on drive {drive}?\n\n"
+                                     f"Do you want to run Check Disk on drive {drive}?
+
+"
                                      "This will schedule a disk check on next restart."):
                 self.log("Check Disk cancelled by user", "info")
                 return
@@ -6194,7 +8959,9 @@ echo.
                 self.log(f"Check Disk scheduled for drive {drive}", "success")
                 self.update_status(f"Check Disk scheduled for drive {drive}")
                 messagebox.showinfo("Check Disk Scheduled", 
-                                  f"Check Disk has been scheduled for drive {drive}.\n\n"
+                                  f"Check Disk has been scheduled for drive {drive}.
+
+"
                                   "The scan will run on the next system restart.")
             else:
                 self.log(f"Error running Check Disk: {stderr}", "error")
@@ -6427,7 +9194,8 @@ echo.
             
             self.log(f"Folder analysis exported to {file_path}", "success")
             self.update_status("Folder analysis exported")
-            messagebox.showinfo("Export Complete", f"Folder analysis has been exported to:\n{file_path}")
+            messagebox.showinfo("Export Complete", f"Folder analysis has been exported to:
+{file_path}")
             
         except Exception as e:
             self.log(f"Error exporting analysis: {str(e)}", "error")
@@ -6563,7 +9331,8 @@ echo.
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output(f"Pinging {host}...\n")
+        self.update_network_output(f"Pinging {host}...
+")
         
         # Start ping in a thread
         ping_thread = Thread(target=self._run_ping_test_thread, args=(host,))
@@ -6608,7 +9377,8 @@ echo.
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output(f"Tracing route to {host}...\n")
+        self.update_network_output(f"Tracing route to {host}...
+")
         
         # Start traceroute in a thread
         trace_thread = Thread(target=self._run_traceroute_thread, args=(host,))
@@ -6659,7 +9429,8 @@ echo.
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output(f"Looking up DNS for {host}...\n")
+        self.update_network_output(f"Looking up DNS for {host}...
+")
         
         # Start DNS lookup in a thread
         dns_thread = Thread(target=self._run_dns_lookup_thread, args=(host,))
@@ -6696,13 +9467,17 @@ echo.
                             ip_addresses.append(ip)
                 
                 if ip_addresses:
-                    self.root.after(0, lambda: self.update_network_output("\n\nDetailed IP Information:\n"))
+                    self.root.after(0, lambda: self.update_network_output("
+
+Detailed IP Information:
+"))
                     # Get information about the first IP
                     try:
                         # Try to get geographic information using a Python socket
                         import socket
                         hostname, aliaslist, ipaddrlist = socket.gethostbyaddr(ip_addresses[0])
-                        self.root.after(0, lambda: self.update_network_output(f"Hostname: {hostname}\n"))
+                        self.root.after(0, lambda: self.update_network_output(f"Hostname: {hostname}
+"))
                     except:
                         pass
             except:
@@ -6722,7 +9497,8 @@ echo.
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output("Retrieving IP configuration...\n")
+        self.update_network_output("Retrieving IP configuration...
+")
         
         # Start IP config retrieval in a thread
         ipconfig_thread = Thread(target=self._show_ip_config_thread)
@@ -6748,7 +9524,10 @@ echo.
                 
                 # Also try to get external IP
                 try:
-                    self.root.after(0, lambda: self.update_network_output("\n\nExternal IP Information:\n"))
+                    self.root.after(0, lambda: self.update_network_output("
+
+External IP Information:
+"))
                     external_ip_thread = Thread(target=self._get_external_ip)
                     external_ip_thread.daemon = True
                     external_ip_thread.start()
@@ -6788,20 +9567,24 @@ echo.
                         ip_match = re.search(r'\d+\.\d+\.\d+\.\d+', data)
                         if ip_match:
                             external_ip = ip_match.group(0)
-                            self.root.after(0, lambda: self.update_network_output(f"External IP: {external_ip}\n"))
+                            self.root.after(0, lambda: self.update_network_output(f"External IP: {external_ip}
+"))
                             return
                     else:
                         # For services that return just the IP
                         external_ip = data.strip()
-                        self.root.after(0, lambda: self.update_network_output(f"External IP: {external_ip}\n"))
+                        self.root.after(0, lambda: self.update_network_output(f"External IP: {external_ip}
+"))
                         return
                 except:
                     continue
             
-            self.root.after(0, lambda: self.update_network_output("Could not determine external IP\n"))
+            self.root.after(0, lambda: self.update_network_output("Could not determine external IP
+"))
             
         except Exception as e:
-            self.root.after(0, lambda: self.update_network_output(f"Error getting external IP: {str(e)}\n"))
+            self.root.after(0, lambda: self.update_network_output(f"Error getting external IP: {str(e)}
+"))
     
     def release_ip(self):
         """Release IP address"""
@@ -6814,15 +9597,20 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Release", 
-                                "This will release your current IP address.\n\n"
-                                "You will temporarily lose network connectivity.\n\n"
+                                "This will release your current IP address.
+
+"
+                                "You will temporarily lose network connectivity.
+
+"
                                 "Do you want to continue?"):
             self.log("IP release cancelled by user", "info")
             return
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output("Releasing IP address...\n")
+        self.update_network_output("Releasing IP address...
+")
         
         # Start IP release in a thread
         release_thread = Thread(target=self._release_ip_thread)
@@ -6843,7 +9631,8 @@ echo.
                 self.root.after(0, lambda: self.update_network_output(f"Error: {stderr}"))
                 self.root.after(0, lambda: self.log(f"IP release error: {stderr}", "error"))
             else:
-                self.root.after(0, lambda: self.update_network_output("IP address released successfully.\n"))
+                self.root.after(0, lambda: self.update_network_output("IP address released successfully.
+"))
                 self.root.after(0, lambda: self.log("IP address released successfully", "success"))
             
             self.root.after(0, lambda: self.update_status("IP address released"))
@@ -6865,7 +9654,8 @@ echo.
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output("Renewing IP address...\n")
+        self.update_network_output("Renewing IP address...
+")
         
         # Start IP renew in a thread
         renew_thread = Thread(target=self._renew_ip_thread)
@@ -6886,11 +9676,14 @@ echo.
                 self.root.after(0, lambda: self.update_network_output(f"Error: {stderr}"))
                 self.root.after(0, lambda: self.log(f"IP renew error: {stderr}", "error"))
             else:
-                self.root.after(0, lambda: self.update_network_output("IP address renewed successfully.\n"))
+                self.root.after(0, lambda: self.update_network_output("IP address renewed successfully.
+"))
                 self.root.after(0, lambda: self.log("IP address renewed successfully", "success"))
                 
                 # Show the new IP configuration
-                self.root.after(0, lambda: self.update_network_output("\nNew IP Configuration:\n"))
+                self.root.after(0, lambda: self.update_network_output("
+New IP Configuration:
+"))
                 self.root.after(0, self._show_ip_config_thread)
             
             self.root.after(0, lambda: self.update_status("IP address renewed"))
@@ -6912,16 +9705,23 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Reset", 
-                                "This will reset the Winsock catalog.\n\n"
-                                "This action will restore network settings to default and might fix network issues.\n\n"
-                                "A system restart may be required afterward.\n\n"
+                                "This will reset the Winsock catalog.
+
+"
+                                "This action will restore network settings to default and might fix network issues.
+
+"
+                                "A system restart may be required afterward.
+
+"
                                 "Do you want to continue?"):
             self.log("Winsock reset cancelled by user", "info")
             return
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output("Resetting Winsock catalog...\n")
+        self.update_network_output("Resetting Winsock catalog...
+")
         
         # Start Winsock reset in a thread
         winsock_thread = Thread(target=self._reset_winsock_thread)
@@ -6942,14 +9742,21 @@ echo.
                 self.root.after(0, lambda: self.update_network_output(f"Error: {stderr}"))
                 self.root.after(0, lambda: self.log(f"Winsock reset error: {stderr}", "error"))
             else:
-                self.root.after(0, lambda: self.update_network_output(stdout or "Winsock catalog has been reset.\n"))
-                self.root.after(0, lambda: self.update_network_output("\nA system restart may be required for the changes to take effect.\n"))
+                self.root.after(0, lambda: self.update_network_output(stdout or "Winsock catalog has been reset.
+"))
+                self.root.after(0, lambda: self.update_network_output("
+A system restart may be required for the changes to take effect.
+"))
                 self.root.after(0, lambda: self.log("Winsock catalog reset successfully", "success"))
                 
                 # Ask if user wants to restart now
                 self.root.after(0, lambda: self._ask_for_restart("Winsock Reset", 
-                                                              "The Winsock catalog has been reset successfully.\n\n"
-                                                              "A system restart is recommended for the changes to take effect.\n\n"
+                                                              "The Winsock catalog has been reset successfully.
+
+"
+                                                              "A system restart is recommended for the changes to take effect.
+
+"
                                                               "Do you want to restart now?"))
             
             self.root.after(0, lambda: self.update_status("Winsock reset completed"))
@@ -6971,16 +9778,23 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Reset", 
-                                "This will reset the TCP/IP stack to its original state.\n\n"
-                                "This action will restore network settings to default and might fix connection issues.\n\n"
-                                "A system restart may be required afterward.\n\n"
+                                "This will reset the TCP/IP stack to its original state.
+
+"
+                                "This action will restore network settings to default and might fix connection issues.
+
+"
+                                "A system restart may be required afterward.
+
+"
                                 "Do you want to continue?"):
             self.log("TCP/IP reset cancelled by user", "info")
             return
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output("Resetting TCP/IP stack...\n")
+        self.update_network_output("Resetting TCP/IP stack...
+")
         
         # Start TCP/IP reset in a thread
         tcpip_thread = Thread(target=self._reset_tcpip_thread)
@@ -7001,14 +9815,21 @@ echo.
                 self.root.after(0, lambda: self.update_network_output(f"Error: {stderr}"))
                 self.root.after(0, lambda: self.log(f"TCP/IP reset error: {stderr}", "error"))
             else:
-                self.root.after(0, lambda: self.update_network_output(stdout or "TCP/IP stack has been reset.\n"))
-                self.root.after(0, lambda: self.update_network_output("\nA system restart may be required for the changes to take effect.\n"))
+                self.root.after(0, lambda: self.update_network_output(stdout or "TCP/IP stack has been reset.
+"))
+                self.root.after(0, lambda: self.update_network_output("
+A system restart may be required for the changes to take effect.
+"))
                 self.root.after(0, lambda: self.log("TCP/IP stack reset successfully", "success"))
                 
                 # Ask if user wants to restart now
                 self.root.after(0, lambda: self._ask_for_restart("TCP/IP Reset", 
-                                                              "The TCP/IP stack has been reset successfully.\n\n"
-                                                              "A system restart is recommended for the changes to take effect.\n\n"
+                                                              "The TCP/IP stack has been reset successfully.
+
+"
+                                                              "A system restart is recommended for the changes to take effect.
+
+"
                                                               "Do you want to restart now?"))
             
             self.root.after(0, lambda: self.update_status("TCP/IP reset completed"))
@@ -7030,7 +9851,8 @@ echo.
         
         # Clear the network output
         self.clear_network_output()
-        self.update_network_output("Flushing DNS resolver cache...\n")
+        self.update_network_output("Flushing DNS resolver cache...
+")
         
         # Start DNS flush in a thread
         dns_thread = Thread(target=self._flush_dns_thread)
@@ -7051,7 +9873,8 @@ echo.
                 self.root.after(0, lambda: self.update_network_output(f"Error: {stderr}"))
                 self.root.after(0, lambda: self.log(f"DNS flush error: {stderr}", "error"))
             else:
-                self.root.after(0, lambda: self.update_network_output(stdout or "DNS resolver cache has been flushed.\n"))
+                self.root.after(0, lambda: self.update_network_output(stdout or "DNS resolver cache has been flushed.
+"))
                 self.root.after(0, lambda: self.log("DNS resolver cache flushed successfully", "success"))
             
             self.root.after(0, lambda: self.update_status("DNS cache flushed"))
@@ -7269,7 +10092,8 @@ echo.
                 
                 # Update the status text with service info
                 self.root.after(0, lambda s=service_status: 
-                           self.hyperv_status_var.set(f"{current_status}\nService status: {s}"))
+                           self.hyperv_status_var.set(f"{current_status}
+Service status: {s}"))
                 
         except Exception as e:
             self.root.after(0, lambda: self.log(f"Error checking Hyper-V service: {str(e)}", "warning"))
@@ -7285,8 +10109,12 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Enable Hyper-V", 
-                                 "This will enable the Hyper-V feature on your system.\n\n"
-                                 "Your computer will need to restart to complete this action.\n\n"
+                                 "This will enable the Hyper-V feature on your system.
+
+"
+                                 "Your computer will need to restart to complete this action.
+
+"
                                  "Do you want to continue?"):
             self.log("Hyper-V enable cancelled by user", "info")
             return
@@ -7323,7 +10151,9 @@ echo.
                 
                 # Ask if user wants to restart now
                 if messagebox.askyesno("Restart Required", 
-                                     "Hyper-V has been enabled. A system restart is required to complete the process.\n\n"
+                                     "Hyper-V has been enabled. A system restart is required to complete the process.
+
+"
                                      "Do you want to restart now?"):
                     self.root.after(0, lambda: self.log("Restarting system..."))
                     self.root.after(0, lambda: self.update_status("Restarting system..."))
@@ -7342,7 +10172,9 @@ echo.
                 self.root.after(0, lambda: self.log(f"Error enabling Hyper-V: {stderr}", "error"))
                 self.root.after(0, lambda: self.update_status("Error enabling Hyper-V"))
                 self.root.after(0, lambda: self.hyperv_status_var.set("Error enabling Hyper-V"))
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to enable Hyper-V:\n\n{stderr}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to enable Hyper-V:
+
+{stderr}"))
             
         except Exception as e:
             error_msg = f"Error enabling Hyper-V: {str(e)}"
@@ -7362,8 +10194,12 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Disable Hyper-V", 
-                                 "This will disable the Hyper-V feature on your system.\n\n"
-                                 "Your computer will need to restart to complete this action.\n\n"
+                                 "This will disable the Hyper-V feature on your system.
+
+"
+                                 "Your computer will need to restart to complete this action.
+
+"
                                  "Do you want to continue?"):
             self.log("Hyper-V disable cancelled by user", "info")
             return
@@ -7400,7 +10236,9 @@ echo.
                 
                 # Ask if user wants to restart now
                 if messagebox.askyesno("Restart Required", 
-                                     "Hyper-V has been disabled. A system restart is required to complete the process.\n\n"
+                                     "Hyper-V has been disabled. A system restart is required to complete the process.
+
+"
                                      "Do you want to restart now?"):
                     self.root.after(0, lambda: self.log("Restarting system..."))
                     self.root.after(0, lambda: self.update_status("Restarting system..."))
@@ -7419,7 +10257,9 @@ echo.
                 self.root.after(0, lambda: self.log(f"Error disabling Hyper-V: {stderr}", "error"))
                 self.root.after(0, lambda: self.update_status("Error disabling Hyper-V"))
                 self.root.after(0, lambda: self.hyperv_status_var.set("Error disabling Hyper-V"))
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to disable Hyper-V:\n\n{stderr}"))
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to disable Hyper-V:
+
+{stderr}"))
             
         except Exception as e:
             error_msg = f"Error disabling Hyper-V: {str(e)}"
@@ -7499,7 +10339,8 @@ echo.
             
             if process.returncode == 0 and stdout.strip():
                 # Process the VM list
-                vm_lines = stdout.strip().split('\n')
+                vm_lines = stdout.strip().split('
+')
                 vm_lines = [line.strip() for line in vm_lines if line.strip()]
                 
                 if vm_lines:
@@ -7580,7 +10421,9 @@ echo.
             else:
                 self.root.after(0, lambda: self.log(f"Error starting VM '{vm_name}': {stderr}", "error"))
                 self.root.after(0, lambda: self.update_status(f"Error starting VM '{vm_name}'"))
-                self.root.after(0, lambda e=stderr: messagebox.showerror("Error", f"Failed to start VM '{vm_name}':\n\n{e}"))
+                self.root.after(0, lambda e=stderr: messagebox.showerror("Error", f"Failed to start VM '{vm_name}':
+
+{e}"))
             
         except Exception as e:
             error_msg = f"Error starting VM '{vm_name}': {str(e)}"
@@ -7608,9 +10451,13 @@ echo.
         # Ask for shutdown type
         shutdown_type = messagebox.askyesnocancel(
             "VM Shutdown Type",
-            f"How do you want to stop '{vm_name}'?\n\n"
-            "Yes: Save state (Hibernation)\n"
-            "No: Shut down (Normal shutdown)\n"
+            f"How do you want to stop '{vm_name}'?
+
+"
+            "Yes: Save state (Hibernation)
+"
+            "No: Shut down (Normal shutdown)
+"
             "Cancel: Abort operation"
         )
         
@@ -7664,7 +10511,9 @@ echo.
             else:
                 self.root.after(0, lambda: self.log(f"Error stopping VM '{vm_name}': {stderr}", "error"))
                 self.root.after(0, lambda: self.update_status(f"Error stopping VM '{vm_name}'"))
-                self.root.after(0, lambda e=stderr: messagebox.showerror("Error", f"Failed to stop VM '{vm_name}':\n\n{e}"))
+                self.root.after(0, lambda e=stderr: messagebox.showerror("Error", f"Failed to stop VM '{vm_name}':
+
+{e}"))
             
         except Exception as e:
             error_msg = f"Error stopping VM '{vm_name}': {str(e)}"
@@ -7910,8 +10759,12 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Optimization", 
-                                 "This will configure Windows visual effects for best performance.\n\n"
-                                 "Some visual elements like animations and transparency will be disabled.\n\n"
+                                 "This will configure Windows visual effects for best performance.
+
+"
+                                 "Some visual elements like animations and transparency will be disabled.
+
+"
                                  "Do you want to continue?"):
             self.log("Visual effects optimization cancelled by user", "info")
             return
@@ -7954,7 +10807,9 @@ echo.
             self.log("Visual effects optimized for performance", "success")
             self.update_status("Visual effects optimized for performance")
             messagebox.showinfo("Optimization Complete", 
-                              "Visual effects have been optimized for performance.\n\n"
+                              "Visual effects have been optimized for performance.
+
+"
                               "You may need to restart your computer to see the full effect.")
             
         except Exception as e:
@@ -8066,24 +10921,41 @@ echo.
             script_path = os.path.join(temp_dir, "clear_standby.bat")
             
             with open(script_path, 'w') as f:
-                f.write('@echo off\n')
-                f.write('echo Clearing standby memory list...\n')
-                f.write('echo This requires RAMMap (Sysinternals) to be installed.\n')
-                f.write('echo If not installed, it will automatically download it.\n\n')
+                f.write('@echo off
+')
+                f.write('echo Clearing standby memory list...
+')
+                f.write('echo This requires RAMMap (Sysinternals) to be installed.
+')
+                f.write('echo If not installed, it will automatically download it.
+
+')
                 
-                f.write('set "RAMMAP_PATH=%ProgramFiles%\\RAMMap\\RAMMap.exe"\n')
-                f.write('if not exist "%RAMMAP_PATH%" (\n')
-                f.write('    echo RAMMap not found. Downloading...\n')
-                f.write('    powershell -Command "Invoke-WebRequest -Uri \'https://download.sysinternals.com/files/RAMMap.zip\' -OutFile \'%TEMP%\\RAMMap.zip\'"\n')
-                f.write('    powershell -Command "Expand-Archive -Path \'%TEMP%\\RAMMap.zip\' -DestinationPath \'%TEMP%\\RAMMap\' -Force"\n')
-                f.write('    set "RAMMAP_PATH=%TEMP%\\RAMMap\\RAMMap.exe"\n')
-                f.write(')\n\n')
+                f.write('set "RAMMAP_PATH=%ProgramFiles%\\RAMMap\\RAMMap.exe"
+')
+                f.write('if not exist "%RAMMAP_PATH%" (
+')
+                f.write('    echo RAMMap not found. Downloading...
+')
+                f.write('    powershell -Command "Invoke-WebRequest -Uri \'https://download.sysinternals.com/files/RAMMap.zip\' -OutFile \'%TEMP%\\RAMMap.zip\'"
+')
+                f.write('    powershell -Command "Expand-Archive -Path \'%TEMP%\\RAMMap.zip\' -DestinationPath \'%TEMP%\\RAMMap\' -Force"
+')
+                f.write('    set "RAMMAP_PATH=%TEMP%\\RAMMap\\RAMMap.exe"
+')
+                f.write(')
+
+')
                 
-                f.write('echo Running RAMMap to clear standby list...\n')
-                f.write('"%RAMMAP_PATH%" -c -e\n')
+                f.write('echo Running RAMMap to clear standby list...
+')
+                f.write('"%RAMMAP_PATH%" -c -e
+')
                 
-                f.write('echo Standby memory list cleared.\n')
-                f.write('pause\n')
+                f.write('echo Standby memory list cleared.
+')
+                f.write('pause
+')
             
             # Execute the script with admin privileges
             subprocess.Popen(
@@ -8143,7 +11015,9 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Indexing Optimization", 
-                                 "This will optimize Windows Search indexing to improve performance.\n\n"
+                                 "This will optimize Windows Search indexing to improve performance.
+
+"
                                  "Do you want to continue?"):
             self.log("Indexing optimization cancelled by user", "info")
             return
@@ -8154,12 +11028,20 @@ echo.
             
             # Show instructions
             messagebox.showinfo("Indexing Optimization", 
-                              "The Indexing Options window will now open.\n\n"
-                              "For best performance, we recommend:\n"
-                              "1. Click 'Modify' to manage indexed locations\n"
-                              "2. Remove unnecessary locations (leave only Start Menu and user folders)\n"
-                              "3. Click 'Advanced' to access advanced options\n"
-                              "4. Click 'Rebuild' to recreate the index from scratch\n\n"
+                              "The Indexing Options window will now open.
+
+"
+                              "For best performance, we recommend:
+"
+                              "1. Click 'Modify' to manage indexed locations
+"
+                              "2. Remove unnecessary locations (leave only Start Menu and user folders)
+"
+                              "3. Click 'Advanced' to access advanced options
+"
+                              "4. Click 'Rebuild' to recreate the index from scratch
+
+"
                               "Note: Rebuilding the index may take some time.")
             
             self.log("Indexing options opened for optimization", "success")
@@ -8181,13 +11063,22 @@ echo.
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Full Optimization", 
-                                 "This will perform a complete system optimization including:\n\n"
-                                 "- Optimizing visual effects for performance\n"
-                                 "- Setting power plan to high performance\n"
-                                 "- Clearing system caches\n"
-                                 "- Freeing up memory\n"
-                                 "- Running disk cleanup\n\n"
-                                 "This process may take several minutes.\n"
+                                 "This will perform a complete system optimization including:
+
+"
+                                 "- Optimizing visual effects for performance
+"
+                                 "- Setting power plan to high performance
+"
+                                 "- Clearing system caches
+"
+                                 "- Freeing up memory
+"
+                                 "- Running disk cleanup
+
+"
+                                 "This process may take several minutes.
+"
                                  "Do you want to continue?"):
             self.log("Full system optimization cancelled by user", "info")
             return
@@ -8415,7 +11306,9 @@ echo.
             
             # Show completion message
             self.root.after(0, lambda: messagebox.showinfo("Optimization Complete", 
-                                                        "System optimization has been completed successfully.\n\n"
+                                                        "System optimization has been completed successfully.
+
+"
                                                         "You may need to restart your computer for all optimizations to take effect."))
             
             # Close progress window after a delay
@@ -8522,14 +11415,19 @@ echo.
                 self.root.after(0, lambda: self.log("Registry backup completed successfully", "success"))
                 self.root.after(0, lambda: self.update_status("Registry backup completed"))
                 self.root.after(0, lambda: messagebox.showinfo("Backup Complete", 
-                                                            f"Registry backup completed successfully.\n\n"
-                                                            f"Backup location: {backup_dir}\n"
+                                                            f"Registry backup completed successfully.
+
+"
+                                                            f"Backup location: {backup_dir}
+"
                                                             f"Files: {backup_filename} and {hkcu_backup_filename}"))
             else:
                 self.root.after(0, lambda: self.log(f"Error creating registry backup: {stderr}", "error"))
                 self.root.after(0, lambda: self.update_status("Error creating registry backup"))
                 self.root.after(0, lambda: messagebox.showerror("Backup Error", 
-                                                             f"Failed to create registry backup:\n\n{stderr}"))
+                                                             f"Failed to create registry backup:
+
+{stderr}"))
                 
         except Exception as e:
             error_msg = f"Error backing up registry: {str(e)}"
@@ -8627,8 +11525,12 @@ echo.
                 
                 # Update the system description
                 self.root.after(0, lambda: self.update_system_description(
-                    "System Restore Point\n\n" +
-                    f"A system restore point with the description '{description}' has been created.\n\n" +
+                    "System Restore Point
+
+" +
+                    f"A system restore point with the description '{description}' has been created.
+
+" +
                     "You can restore your system to this point through Windows System Restore if needed."
                 ))
             else:
@@ -8658,8 +11560,12 @@ echo.
                     
                     # Update the system description
                     self.root.after(0, lambda: self.update_system_description(
-                        "System Restore Point\n\n" +
-                        f"A system restore point with the description '{description}' has been created.\n\n" +
+                        "System Restore Point
+
+" +
+                        f"A system restore point with the description '{description}' has been created.
+
+" +
                         "You can restore your system to this point through Windows System Restore if needed."
                     ))
                 else:
@@ -8670,9 +11576,15 @@ echo.
                     
                     # Update the system description
                     self.root.after(0, lambda err=stderr: self.update_system_description(
-                        "System Restore Point Error\n\n" +
-                        f"Failed to create a system restore point.\n\n" +
-                        f"Error: {err}\n\n" +
+                        "System Restore Point Error
+
+" +
+                        f"Failed to create a system restore point.
+
+" +
+                        f"Error: {err}
+
+" +
                         "Please make sure System Restore is enabled on your system."
                     ))
         
@@ -8693,16 +11605,24 @@ echo.
         
         # Update description
         self.update_cleanup_description(
-            "Windows Update File Removal\n\n" +
-            "This tool removes cached Windows Update files to free up disk space.\n\n" +
+            "Windows Update File Removal
+
+" +
+            "This tool removes cached Windows Update files to free up disk space.
+
+" +
             "This will stop the Windows Update service temporarily, remove the cached files, "
             "and then restart the service."
         )
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Removal", 
-                                 "This will remove Windows Update cached files.\n\n"
-                                 "The Windows Update service will be stopped temporarily.\n\n"
+                                 "This will remove Windows Update cached files.
+
+"
+                                 "The Windows Update service will be stopped temporarily.
+
+"
                                  "Do you want to continue?"):
             self.log("Windows Update file removal cancelled by user", "info")
             return
@@ -8801,14 +11721,19 @@ echo.
             self.root.after(0, lambda: self.update_status("Windows Update files removed"))
             
             if space_saved != "Unknown":
-                success_msg += f"\nSpace freed: {space_saved}"
+                success_msg += f"
+Space freed: {space_saved}"
             
             self.root.after(0, lambda msg=success_msg: messagebox.showinfo("Cleanup Complete", msg))
             
             # Update the description
             self.root.after(0, lambda space=space_saved: self.update_cleanup_description(
-                "Windows Update File Removal\n\n" +
-                "Windows Update cached files have been removed successfully.\n\n" +
+                "Windows Update File Removal
+
+" +
+                "Windows Update cached files have been removed successfully.
+
+" +
                 f"Estimated space freed: {space}"
             ))
             
@@ -8928,8 +11853,12 @@ echo.
         
         # Update the cleanup description
         self.update_cleanup_description(
-            "Browser Data Cleanup\n\n" +
-            "This tool cleans temporary browser data including cache, cookies, and history.\n\n" +
+            "Browser Data Cleanup
+
+" +
+            "This tool cleans temporary browser data including cache, cookies, and history.
+
+" +
             "Select the browsers you want to clean and the specific data types to remove."
         )
     
@@ -8995,7 +11924,10 @@ echo.
             self.root.after(0, lambda: self.update_status("Browser data cleanup completed"))
             
             # Show results
-            result_msg = "Browser Data Cleanup Results:\n\n" + "\n".join(results)
+            result_msg = "Browser Data Cleanup Results:
+
+" + "
+".join(results)
             self.root.after(0, lambda msg=result_msg: messagebox.showinfo("Cleanup Complete", msg))
             
         except Exception as e:
@@ -9308,25 +12240,43 @@ echo.
         
         # Update the description
         self.update_cleanup_description(
-            "Full System Cleanup\n\n" +
-            "This will perform a complete cleanup of your system, including:\n" +
-            "- Temporary files\n" +
-            "- Windows cache\n" +
-            "- Recycle Bin\n" +
-            "- Windows Update cache\n" +
-            "- Internet browser cache\n\n" +
+            "Full System Cleanup
+
+" +
+            "This will perform a complete cleanup of your system, including:
+" +
+            "- Temporary files
+" +
+            "- Windows cache
+" +
+            "- Recycle Bin
+" +
+            "- Windows Update cache
+" +
+            "- Internet browser cache
+
+" +
             "This process may take several minutes."
         )
         
         # Confirm with user
         if not messagebox.askyesno("Confirm Full Cleanup", 
-                                 "This will perform a complete cleanup of your system. This includes:\n\n" +
-                                 "• Empty the Recycle Bin\n" +
-                                 "• Clear temporary files\n" +
-                                 "• Run Windows Disk Cleanup\n" +
-                                 "• Clear Windows cache\n" +
-                                 "• Clean browser data\n" +
-                                 "• Clear Windows Update files\n\n" +
+                                 "This will perform a complete cleanup of your system. This includes:
+
+" +
+                                 "• Empty the Recycle Bin
+" +
+                                 "• Clear temporary files
+" +
+                                 "• Run Windows Disk Cleanup
+" +
+                                 "• Clear Windows cache
+" +
+                                 "• Clean browser data
+" +
+                                 "• Clear Windows Update files
+
+" +
                                  "This process may take several minutes. Continue?"):
             self.log("Full system cleanup cancelled by user", "info")
             return
@@ -9367,14 +12317,24 @@ echo.
         self.update_status("Clearing temporary files...")
         
         self.update_cleanup_description(
-            "Clear Temporary Files\n\n" +
-            "This will scan and delete temporary files from the following locations:\n" +
-            "- Windows Temp folder (%windir%\\Temp)\n" +
-            "- User Temp folder (%temp%)\n" +
-            "- Windows Prefetch folder (%windir%\\Prefetch)\n" +
-            "- Internet Explorer Cache\n" +
-            "- Windows Recent Items\n" +
-            "- Windows Thumbnail Cache\n\n" +
+            "Clear Temporary Files
+
+" +
+            "This will scan and delete temporary files from the following locations:
+" +
+            "- Windows Temp folder (%windir%\\Temp)
+" +
+            "- User Temp folder (%temp%)
+" +
+            "- Windows Prefetch folder (%windir%\\Prefetch)
+" +
+            "- Internet Explorer Cache
+" +
+            "- Windows Recent Items
+" +
+            "- Windows Thumbnail Cache
+
+" +
             "Temporary files can accumulate over time and consume valuable disk space. " +
             "Removing them is generally safe and can improve system performance."
         )
@@ -9493,7 +12453,9 @@ echo.
                 self.root.after(0, lambda: self.log(warning_msg, "warning"))
             
             self.root.after(0, lambda: messagebox.showinfo("Cleanup Complete", 
-                                                        f"{success_msg}\n\n{stats['errors']} files could not be deleted."))
+                                                        f"{success_msg}
+
+{stats['errors']} files could not be deleted."))
             
         except Exception as e:
             error_msg = f"Error clearing temporary files: {str(e)}"
@@ -9507,13 +12469,22 @@ echo.
         self.update_status("Clearing Windows cache files...")
         
         self.update_cleanup_description(
-            "Clear Windows Cache\n\n" +
-            "This will clear various Windows cache files including:\n" +
-            "- DNS Cache\n" +
-            "- Font Cache\n" +
-            "- Icon Cache\n" +
-            "- Windows Store Cache\n" +
-            "- Windows Thumbnail Cache\n\n" +
+            "Clear Windows Cache
+
+" +
+            "This will clear various Windows cache files including:
+" +
+            "- DNS Cache
+" +
+            "- Font Cache
+" +
+            "- Icon Cache
+" +
+            "- Windows Store Cache
+" +
+            "- Windows Thumbnail Cache
+
+" +
             "Clearing these caches can help resolve performance issues and display problems. " +
             "Windows will automatically rebuild these caches as needed."
         )
@@ -9616,7 +12587,9 @@ if __name__ == "__main__":
     # Check if running on Windows 10/11
     if not is_windows_10_or_11():
         if not messagebox.askyesno("Compatibility Warning", 
-                                 "This application is designed for Windows 10 and 11.\n\n" +
+                                 "This application is designed for Windows 10 and 11.
+
+" +
                                  "Your Windows version may not be fully compatible. Continue anyway?"):
             sys.exit(1)
     
@@ -9682,7 +12655,9 @@ if __name__ == "__main__":
         if not is_admin():
             app.log("Running without administrator privileges. Some features may be limited.", "warning")
             if messagebox.askyesno("Administrator Privileges Required", 
-                                 "This application works best with administrator privileges.\n\n" +
+                                 "This application works best with administrator privileges.
+
+" +
                                  "Would you like to restart with administrator privileges?"):
                 app.restart_as_admin()
                 root.destroy()
@@ -9696,4 +12671,6 @@ if __name__ == "__main__":
     # Start the splash screen
     splash_root.mainloop()
     
+
+
 
